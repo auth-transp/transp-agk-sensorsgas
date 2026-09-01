@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QComboBox, QCheckBox, QPushButton, 
                              QGroupBox, QTabWidget, QLineEdit, QFileDialog, QMessageBox, 
                              QGridLayout)
-from PyQt6.QtWidgets import QDialog
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QPalette
 
@@ -176,10 +175,6 @@ class MainWindow(QMainWindow):
         self.max_points = 60
         self.auto_y_scale = True
 
-        # POPUP_AXIS_CONTROLS_PATCH_V7
-
-        # Axis controls live in a separate dialog and cannot resize the dashboard.
-
         # LEFT_ALIGNED_AXIS_PANEL_PATCH_V6
 
         # Compact left-aligned axis controls.
@@ -294,19 +289,12 @@ class MainWindow(QMainWindow):
         
 
         
-        # Axis controls are kept in a separate dialog. Because the dialog is
-        # not part of the dashboard layout, opening it cannot move or crop the
-        # graph, recording checkbox, or live readings.
-        self.axis_dialog = QDialog(self)
-        self.axis_dialog.setWindowTitle("Axis Controls")
-        self.axis_dialog.setModal(False)
-        self.axis_dialog.setSizeGripEnabled(False)
-        self.axis_dialog.setMinimumWidth(355)
-        self.axis_dialog.setMaximumWidth(355)
-
-        axis_outer = QVBoxLayout(self.axis_dialog)
-        axis_outer.setContentsMargins(10, 10, 10, 10)
-        axis_outer.setSpacing(6)
+        # Numeric axis controls. Blank fields keep that axis automatic.
+        self.axis_group = QGroupBox("Axis Limits (blank = automatic)")
+        self.axis_group.setMaximumWidth(390)
+        axis_outer = QVBoxLayout()
+        axis_outer.setContentsMargins(8, 8, 8, 8)
+        axis_outer.setSpacing(5)
 
         self.txt_time_window = QLineEdit()
         self.txt_temp_y_min = QLineEdit()
@@ -319,46 +307,51 @@ class MainWindow(QMainWindow):
 
         time_row = QHBoxLayout()
         time_row.setSpacing(6)
-        time_row.addWidget(QLabel("Visible time (s):"))
-        self.txt_time_window.setFixedWidth(72)
+        time_label = QLabel("Visible time (s):")
+        time_label.setFixedWidth(100)
+        time_row.addWidget(time_label)
         time_row.addWidget(self.txt_time_window)
         time_row.addWidget(QLabel("latest data"))
         time_row.addStretch()
         axis_outer.addLayout(time_row)
 
         axis_grid = QGridLayout()
-        axis_grid.setContentsMargins(0, 0, 0, 0)
-        axis_grid.setHorizontalSpacing(6)
-        axis_grid.setVerticalSpacing(5)
+        axis_grid.setHorizontalSpacing(5)
+        axis_grid.setVerticalSpacing(4)
         axis_grid.addWidget(QLabel("Axis"), 0, 0)
-        axis_grid.addWidget(QLabel("Minimum"), 0, 1)
-        axis_grid.addWidget(QLabel("Maximum"), 0, 2)
+        axis_grid.addWidget(QLabel("Min"), 0, 1, 1, 2)
+        axis_grid.addWidget(QLabel("Max"), 0, 3, 1, 2)
 
         for sensor_id in range(1, 4):
             row = sensor_id
             gas_label = QLabel(f"S{sensor_id} gas:")
+            gas_label.setFixedWidth(100)
             gas_min = QLineEdit()
             gas_max = QLineEdit()
-            gas_min.setFixedWidth(76)
-            gas_max.setFixedWidth(76)
             self.lbl_axis_gas_name[sensor_id] = gas_label
             self.txt_gas_y_min[sensor_id] = gas_min
             self.txt_gas_y_max[sensor_id] = gas_max
             axis_grid.addWidget(gas_label, row, 0)
-            axis_grid.addWidget(gas_min, row, 1)
-            axis_grid.addWidget(gas_max, row, 2)
+            axis_grid.addWidget(QLabel("Min"), row, 1)
+            axis_grid.addWidget(gas_min, row, 2)
+            axis_grid.addWidget(QLabel("Max"), row, 3)
+            axis_grid.addWidget(gas_max, row, 4)
 
-        self.txt_temp_y_min.setFixedWidth(76)
-        self.txt_temp_y_max.setFixedWidth(76)
-        axis_grid.addWidget(QLabel("Temperature:"), 4, 0)
-        axis_grid.addWidget(self.txt_temp_y_min, 4, 1)
-        axis_grid.addWidget(self.txt_temp_y_max, 4, 2)
+        temp_label = QLabel("Temperature:")
+        temp_label.setFixedWidth(100)
+        axis_grid.addWidget(temp_label, 4, 0)
+        axis_grid.addWidget(QLabel("Min"), 4, 1)
+        axis_grid.addWidget(self.txt_temp_y_min, 4, 2)
+        axis_grid.addWidget(QLabel("Max"), 4, 3)
+        axis_grid.addWidget(self.txt_temp_y_max, 4, 4)
 
-        self.txt_hum_y_min.setFixedWidth(76)
-        self.txt_hum_y_max.setFixedWidth(76)
-        axis_grid.addWidget(QLabel("Humidity:"), 5, 0)
-        axis_grid.addWidget(self.txt_hum_y_min, 5, 1)
-        axis_grid.addWidget(self.txt_hum_y_max, 5, 2)
+        hum_label = QLabel("Humidity:")
+        hum_label.setFixedWidth(100)
+        axis_grid.addWidget(hum_label, 5, 0)
+        axis_grid.addWidget(QLabel("Min"), 5, 1)
+        axis_grid.addWidget(self.txt_hum_y_min, 5, 2)
+        axis_grid.addWidget(QLabel("Max"), 5, 3)
+        axis_grid.addWidget(self.txt_hum_y_max, 5, 4)
 
         all_axis_edits = [
             self.txt_time_window,
@@ -372,6 +365,7 @@ class MainWindow(QMainWindow):
             ))
 
         for edit in all_axis_edits:
+            edit.setFixedWidth(62)
             edit.setPlaceholderText("Auto")
             edit.returnPressed.connect(self.apply_axis_limits)
 
@@ -386,6 +380,7 @@ class MainWindow(QMainWindow):
         self.btn_clear_axis = QPushButton("Clear Manual Limits")
         self.btn_clear_axis.clicked.connect(self.clear_axis_limits)
         axis_button_layout.addWidget(self.btn_clear_axis)
+        axis_button_layout.addStretch()
         axis_outer.addLayout(axis_button_layout)
 
         self.lbl_axis_status = QLabel(
@@ -394,11 +389,25 @@ class MainWindow(QMainWindow):
         self.lbl_axis_status.setWordWrap(True)
         self.lbl_axis_status.setStyleSheet("color: gray;")
         axis_outer.addWidget(self.lbl_axis_status)
+        self.axis_group.setLayout(axis_outer)
 
-        self.btn_toggle_axis = QPushButton("Axis Controls...")
+        self.btn_toggle_axis = QPushButton("Show Axis Controls")
+        self.btn_toggle_axis.setCheckable(True)
+        self.btn_toggle_axis.setChecked(False)
         self.btn_toggle_axis.setStyleSheet("font-weight: bold;")
-        self.btn_toggle_axis.clicked.connect(self._toggle_axis_panel)
+        self.btn_toggle_axis.toggled.connect(self._toggle_axis_panel)
         layout.addWidget(self.btn_toggle_axis)
+        self.axis_group.setVisible(False)
+
+        # Keep the compact panel at the left. The stretch consumes all unused
+        # horizontal room, so the input fields never drift to the right.
+        axis_panel_row = QHBoxLayout()
+        axis_panel_row.setContentsMargins(0, 0, 0, 0)
+        axis_panel_row.addWidget(
+            self.axis_group, 0, Qt.AlignmentFlag.AlignLeft
+        )
+        axis_panel_row.addStretch()
+        layout.addLayout(axis_panel_row)
 
 
         body_layout = QHBoxLayout()
@@ -1014,19 +1023,25 @@ class MainWindow(QMainWindow):
         self._current_layout_key = None
         self.update_plot()
 
-    def _toggle_axis_panel(self, _checked=False):
-        """Open or hide the independent axis-controls dialog."""
-        if not hasattr(self, 'axis_dialog'):
+    def _toggle_axis_panel(self, visible):
+        """Show or hide the left-aligned axis panel without widening the window."""
+        if not hasattr(self, 'axis_group'):
             return
 
-        if self.axis_dialog.isVisible():
-            self.axis_dialog.hide()
-            return
+        width_before = self.width()
+        self.axis_group.setVisible(visible)
+        self.btn_toggle_axis.setText(
+            "Hide Axis Controls" if visible else "Show Axis Controls"
+        )
 
-        self.axis_dialog.adjustSize()
-        self.axis_dialog.show()
-        self.axis_dialog.raise_()
-        self.axis_dialog.activateWindow()
+        # Keep the existing width. Only vertical space may change.
+        self.resize(width_before, self.height())
+        QTimer.singleShot(
+            0,
+            lambda saved_width=width_before: self.resize(
+                saved_width, self.height()
+            )
+        )
 
     def _update_axis_gas_labels(self):
         if not hasattr(self, 'lbl_axis_gas_name'):

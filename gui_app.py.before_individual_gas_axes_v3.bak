@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QComboBox, QCheckBox, QPushButton, 
                              QGroupBox, QTabWidget, QLineEdit, QFileDialog, QMessageBox, 
                              QGridLayout)
-from PyQt6.QtWidgets import QDialog
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QPalette
 
@@ -176,23 +175,11 @@ class MainWindow(QMainWindow):
         self.max_points = 60
         self.auto_y_scale = True
 
-        # POPUP_AXIS_CONTROLS_PATCH_V7
-
-        # Axis controls live in a separate dialog and cannot resize the dashboard.
-
-        # LEFT_ALIGNED_AXIS_PANEL_PATCH_V6
-
-        # Compact left-aligned axis controls.
-
-        # COMPACT_AXIS_PANEL_PATCH_V5
-        # Compact axis layout prevents horizontal window growth.
-        # COLLAPSIBLE_AXES_SAFE_RECORDING_PATCH_V4
-        # Axis panel can be hidden; recording errors are handled safely.
-        # INDIVIDUAL_GAS_AXIS_LIMITS_PATCH_V3
+        # AXIS_LIMITS_PATCH_V2
         # Plot-only settings; independent from sensor reading and CSV saving.
         self.manual_axis_limits = {
             'time_window_s': None,
-            'gas_by_sensor': {1: None, 2: None, 3: None},
+            'gas': None,
             'temp': None,
             'hum': None,
         }
@@ -221,8 +208,6 @@ class MainWindow(QMainWindow):
         self.build_settings_tab()
         
         self.load_settings()
-        
-        self._update_axis_gas_labels()
         self.refresh_all_ports()
         
         for i in range(1, 4):
@@ -233,8 +218,6 @@ class MainWindow(QMainWindow):
             self.sensor_configs[i].chk_plot_gas.toggled.connect(lambda _: self._force_layout_rebuild())
             self.sensor_configs[i].chk_plot_temp.toggled.connect(lambda _: self._force_layout_rebuild())
             self.sensor_configs[i].chk_plot_hum.toggled.connect(lambda _: self._force_layout_rebuild())
-            self.sensor_configs[i].cmb_gas.currentTextChanged.connect(self._on_axis_gas_name_changed)
-
         
         self.plot_timer = QTimer()
         self.plot_timer.timeout.connect(self.plot_tick)
@@ -294,113 +277,103 @@ class MainWindow(QMainWindow):
         
 
         
-        # Axis controls are kept in a separate dialog. Because the dialog is
-        # not part of the dashboard layout, opening it cannot move or crop the
-        # graph, recording checkbox, or live readings.
-        self.axis_dialog = QDialog(self)
-        self.axis_dialog.setWindowTitle("Axis Controls")
-        self.axis_dialog.setModal(False)
-        self.axis_dialog.setSizeGripEnabled(False)
-        self.axis_dialog.setMinimumWidth(355)
-        self.axis_dialog.setMaximumWidth(355)
+        # Numeric axis controls. Blank fields keep that axis automatic.
+        
+        axis_group = QGroupBox("Axis Limits (blank = automatic)")
+        
+        axis_layout = QGridLayout()
 
-        axis_outer = QVBoxLayout(self.axis_dialog)
-        axis_outer.setContentsMargins(10, 10, 10, 10)
-        axis_outer.setSpacing(6)
-
+        
         self.txt_time_window = QLineEdit()
+        
+        self.txt_gas_y_min = QLineEdit()
+        
+        self.txt_gas_y_max = QLineEdit()
+        
         self.txt_temp_y_min = QLineEdit()
+        
         self.txt_temp_y_max = QLineEdit()
+        
         self.txt_hum_y_min = QLineEdit()
+        
         self.txt_hum_y_max = QLineEdit()
-        self.txt_gas_y_min = {}
-        self.txt_gas_y_max = {}
-        self.lbl_axis_gas_name = {}
 
-        time_row = QHBoxLayout()
-        time_row.setSpacing(6)
-        time_row.addWidget(QLabel("Visible time (s):"))
-        self.txt_time_window.setFixedWidth(72)
-        time_row.addWidget(self.txt_time_window)
-        time_row.addWidget(QLabel("latest data"))
-        time_row.addStretch()
-        axis_outer.addLayout(time_row)
-
-        axis_grid = QGridLayout()
-        axis_grid.setContentsMargins(0, 0, 0, 0)
-        axis_grid.setHorizontalSpacing(6)
-        axis_grid.setVerticalSpacing(5)
-        axis_grid.addWidget(QLabel("Axis"), 0, 0)
-        axis_grid.addWidget(QLabel("Minimum"), 0, 1)
-        axis_grid.addWidget(QLabel("Maximum"), 0, 2)
-
-        for sensor_id in range(1, 4):
-            row = sensor_id
-            gas_label = QLabel(f"S{sensor_id} gas:")
-            gas_min = QLineEdit()
-            gas_max = QLineEdit()
-            gas_min.setFixedWidth(76)
-            gas_max.setFixedWidth(76)
-            self.lbl_axis_gas_name[sensor_id] = gas_label
-            self.txt_gas_y_min[sensor_id] = gas_min
-            self.txt_gas_y_max[sensor_id] = gas_max
-            axis_grid.addWidget(gas_label, row, 0)
-            axis_grid.addWidget(gas_min, row, 1)
-            axis_grid.addWidget(gas_max, row, 2)
-
-        self.txt_temp_y_min.setFixedWidth(76)
-        self.txt_temp_y_max.setFixedWidth(76)
-        axis_grid.addWidget(QLabel("Temperature:"), 4, 0)
-        axis_grid.addWidget(self.txt_temp_y_min, 4, 1)
-        axis_grid.addWidget(self.txt_temp_y_max, 4, 2)
-
-        self.txt_hum_y_min.setFixedWidth(76)
-        self.txt_hum_y_max.setFixedWidth(76)
-        axis_grid.addWidget(QLabel("Humidity:"), 5, 0)
-        axis_grid.addWidget(self.txt_hum_y_min, 5, 1)
-        axis_grid.addWidget(self.txt_hum_y_max, 5, 2)
-
-        all_axis_edits = [
-            self.txt_time_window,
-            self.txt_temp_y_min, self.txt_temp_y_max,
-            self.txt_hum_y_min, self.txt_hum_y_max,
-        ]
-        for sensor_id in range(1, 4):
-            all_axis_edits.extend((
-                self.txt_gas_y_min[sensor_id],
-                self.txt_gas_y_max[sensor_id],
-            ))
-
-        for edit in all_axis_edits:
+        
+        for edit in (
+        
+                self.txt_time_window,
+        
+                self.txt_gas_y_min, self.txt_gas_y_max,
+        
+                self.txt_temp_y_min, self.txt_temp_y_max,
+        
+                self.txt_hum_y_min, self.txt_hum_y_max,
+        
+        ):
+        
+            edit.setFixedWidth(75)
+        
             edit.setPlaceholderText("Auto")
+        
             edit.returnPressed.connect(self.apply_axis_limits)
 
-        axis_outer.addLayout(axis_grid)
+        
+        axis_layout.addWidget(QLabel("Visible time (s):"), 0, 0)
+        
+        axis_layout.addWidget(self.txt_time_window, 0, 1)
+        
+        axis_layout.addWidget(QLabel("Gas min:"), 0, 2)
+        
+        axis_layout.addWidget(self.txt_gas_y_min, 0, 3)
+        
+        axis_layout.addWidget(QLabel("Gas max:"), 0, 4)
+        
+        axis_layout.addWidget(self.txt_gas_y_max, 0, 5)
+        
+        axis_layout.addWidget(QLabel("Temp min:"), 0, 6)
+        
+        axis_layout.addWidget(self.txt_temp_y_min, 0, 7)
+        
+        axis_layout.addWidget(QLabel("Temp max:"), 0, 8)
+        
+        axis_layout.addWidget(self.txt_temp_y_max, 0, 9)
 
-        axis_button_layout = QHBoxLayout()
+        
+        axis_layout.addWidget(QLabel("Humidity min:"), 1, 0)
+        
+        axis_layout.addWidget(self.txt_hum_y_min, 1, 1)
+        
+        axis_layout.addWidget(QLabel("Humidity max:"), 1, 2)
+        
+        axis_layout.addWidget(self.txt_hum_y_max, 1, 3)
+
+        
         self.btn_apply_axis = QPushButton("Apply Axis Limits")
+        
         self.btn_apply_axis.setStyleSheet("font-weight: bold;")
+        
         self.btn_apply_axis.clicked.connect(self.apply_axis_limits)
-        axis_button_layout.addWidget(self.btn_apply_axis)
+        
+        axis_layout.addWidget(self.btn_apply_axis, 1, 4, 1, 2)
 
+        
         self.btn_clear_axis = QPushButton("Clear Manual Limits")
+        
         self.btn_clear_axis.clicked.connect(self.clear_axis_limits)
-        axis_button_layout.addWidget(self.btn_clear_axis)
-        axis_outer.addLayout(axis_button_layout)
+        
+        axis_layout.addWidget(self.btn_clear_axis, 1, 6, 1, 2)
 
-        self.lbl_axis_status = QLabel(
-            "Each gas uses its own Y-axis in Separate Gas Plots."
-        )
-        self.lbl_axis_status.setWordWrap(True)
+        
+        self.lbl_axis_status = QLabel("The time window follows the newest reading.")
+        
         self.lbl_axis_status.setStyleSheet("color: gray;")
-        axis_outer.addWidget(self.lbl_axis_status)
+        
+        axis_layout.addWidget(self.lbl_axis_status, 1, 8, 1, 2)
 
-        self.btn_toggle_axis = QPushButton("Axis Controls...")
-        self.btn_toggle_axis.setStyleSheet("font-weight: bold;")
-        self.btn_toggle_axis.clicked.connect(self._toggle_axis_panel)
-        layout.addWidget(self.btn_toggle_axis)
-
-
+        
+        axis_group.setLayout(axis_layout)
+        
+        layout.addWidget(axis_group)
         body_layout = QHBoxLayout()
         
         # Left Side (Plot and Toolbar)
@@ -662,81 +635,34 @@ class MainWindow(QMainWindow):
             print(f"Failed to save settings: {e}")
 
     def toggle_saving(self, checked):
-        """Start/stop CSV logging without allowing a file error to close the GUI."""
-        if not checked:
-            self.save_start_time = None
-            self.is_saving = False
-            self._force_layout_rebuild()
-            return
-
-        try:
+        if checked:
             fname = self.txt_filename.text().strip()
             if not fname:
-                QMessageBox.warning(
-                    self,
-                    "Recording Not Started",
-                    "Please select a CSV filename in the Settings tab."
-                )
+                QMessageBox.warning(self, "Warning", "Please select a CSV filename in the Settings tab.")
                 self.chk_save.blockSignals(True)
                 self.chk_save.setChecked(False)
                 self.chk_save.blockSignals(False)
                 return
-
-            # Normalize the path and make its parent folder when necessary.
-            fname = os.path.abspath(os.path.expanduser(fname))
-            parent_folder = os.path.dirname(fname)
-            if parent_folder and not os.path.isdir(parent_folder):
-                os.makedirs(parent_folder, exist_ok=True)
-            self.txt_filename.setText(fname)
-
-            no_sensor_active = not any(
-                self.chk_activate[sensor_id].isChecked()
-                for sensor_id in range(1, 4)
-            )
-            if no_sensor_active:
-                QMessageBox.information(
-                    self,
-                    "No Sensors Active",
-                    "Recording can still start, but NaN values will be written "
-                    "until sensors are activated and provide readings."
-                )
-
+            
             if os.path.exists(fname):
-                QMessageBox.information(
-                    self,
-                    "Appending Data",
-                    f"The file '{fname}' already exists.\nData will be appended to it."
-                )
-
-            # Open/create the file before clearing the plot history. Any file/path
-            # problem is caught below and shown as a message instead of closing Qt.
+                QMessageBox.information(self, "Appending Data", f"The file '{fname}' already exists.\nData will be appended to it.")
+            
+            # Clear historical data to synchronize plot with new CSV session
+            self.times.clear()
+            for i in range(1, 4):
+                self.historical_data[i]['gas'].clear()
+                self.historical_data[i]['temp'].clear()
+                self.historical_data[i]['hum'].clear()
+            
             self.logger.set_filename(fname)
             self.logger.start_session()
-
-            self.times.clear()
-            for sensor_id in range(1, 4):
-                self.historical_data[sensor_id]['gas'].clear()
-                self.historical_data[sensor_id]['temp'].clear()
-                self.historical_data[sensor_id]['hum'].clear()
-
             self.save_start_time = self.logger.start_time
             self.is_saving = True
             self._force_layout_rebuild()
-
-        except Exception as exc:
+        else:
             self.save_start_time = None
             self.is_saving = False
-            self.chk_save.blockSignals(True)
-            self.chk_save.setChecked(False)
-            self.chk_save.blockSignals(False)
-            print(f"Failed to start recording: {type(exc).__name__}: {exc}")
-            QMessageBox.critical(
-                self,
-                "Recording Error",
-                "Recording could not start, but the program will remain open.\n\n"
-                f"{type(exc).__name__}: {exc}\n\n"
-                "Choose another CSV location in the Settings tab and try again."
-            )
+            self._force_layout_rebuild()
 
     def update_log_interval(self, text):
         try:
@@ -925,29 +851,11 @@ class MainWindow(QMainWindow):
     def log_tick(self):
         if not self.is_saving:
             return
-
-        try:
-            s1 = self.latest_data[1]
-            s2 = self.latest_data[2]
-            s3 = self.latest_data[3]
-            self.logger.log(s1, s2, s3)
-        except Exception as exc:
-            # PyQt can terminate on an uncaught exception inside a timer slot.
-            # Stop recording safely and keep the main window running.
-            self.is_saving = False
-            self.save_start_time = None
-            self.chk_save.blockSignals(True)
-            self.chk_save.setChecked(False)
-            self.chk_save.blockSignals(False)
-            print(f"Recording stopped: {type(exc).__name__}: {exc}")
-            QMessageBox.critical(
-                self,
-                "Recording Stopped",
-                "An error occurred while writing the CSV file. Recording was "
-                "stopped, but the program remains open.\n\n"
-                f"{type(exc).__name__}: {exc}"
-            )
-            self._force_layout_rebuild()
+            
+        s1 = self.latest_data[1]
+        s2 = self.latest_data[2]
+        s3 = self.latest_data[3]
+        self.logger.log(s1, s2, s3)
 
     def plot_tick(self):
         now = datetime.now()
@@ -1014,35 +922,6 @@ class MainWindow(QMainWindow):
         self._current_layout_key = None
         self.update_plot()
 
-    def _toggle_axis_panel(self, _checked=False):
-        """Open or hide the independent axis-controls dialog."""
-        if not hasattr(self, 'axis_dialog'):
-            return
-
-        if self.axis_dialog.isVisible():
-            self.axis_dialog.hide()
-            return
-
-        self.axis_dialog.adjustSize()
-        self.axis_dialog.show()
-        self.axis_dialog.raise_()
-        self.axis_dialog.activateWindow()
-
-    def _update_axis_gas_labels(self):
-        if not hasattr(self, 'lbl_axis_gas_name'):
-            return
-        for sensor_id in range(1, 4):
-            gas_name = "Gas"
-            if hasattr(self, 'sensor_configs') and sensor_id in self.sensor_configs:
-                gas_name = self.sensor_configs[sensor_id].cmb_gas.currentText() or "Gas"
-            self.lbl_axis_gas_name[sensor_id].setText(
-                f"S{sensor_id} {gas_name}:"
-            )
-
-    def _on_axis_gas_name_changed(self, _text):
-        self._update_axis_gas_labels()
-        self._force_layout_rebuild()
-
     def _parse_axis_range(self, minimum_edit, maximum_edit, label):
         minimum_text = minimum_edit.text().strip()
         maximum_text = maximum_edit.text().strip()
@@ -1074,15 +953,9 @@ class MainWindow(QMainWindow):
             else:
                 time_window_s = None
 
-            gas_limits = {}
-            for sensor_id in range(1, 4):
-                gas_name = self.sensor_configs[sensor_id].cmb_gas.currentText()
-                gas_limits[sensor_id] = self._parse_axis_range(
-                    self.txt_gas_y_min[sensor_id],
-                    self.txt_gas_y_max[sensor_id],
-                    f"S{sensor_id} {gas_name} axis",
-                )
-
+            gas_limits = self._parse_axis_range(
+                self.txt_gas_y_min, self.txt_gas_y_max, "Gas axis"
+            )
             temp_limits = self._parse_axis_range(
                 self.txt_temp_y_min, self.txt_temp_y_max, "Temperature axis"
             )
@@ -1095,70 +968,36 @@ class MainWindow(QMainWindow):
 
         self.manual_axis_limits = {
             'time_window_s': time_window_s,
-            'gas_by_sensor': gas_limits,
+            'gas': gas_limits,
             'temp': temp_limits,
             'hum': hum_limits,
         }
 
-        has_manual_y = (
-            any(value is not None for value in gas_limits.values())
-            or temp_limits is not None
-            or hum_limits is not None
-        )
-        if has_manual_y:
+        # Manual Y values take priority over Auto Y-Scale.
+        if any(value is not None for value in (gas_limits, temp_limits, hum_limits)):
             self.chk_auto_y.blockSignals(True)
             self.chk_auto_y.setChecked(False)
             self.chk_auto_y.blockSignals(False)
             self.auto_y_scale = False
 
-        active_gases = [
-            sensor_id for sensor_id in range(1, 4)
-            if self.sensor_configs[sensor_id].chk_plot_gas.isChecked()
-        ]
-        manual_active_gases = [
-            sensor_id for sensor_id in active_gases
-            if gas_limits.get(sensor_id) is not None
-        ]
-
-        switched_layout = False
-        if (
-            len(active_gases) > 1
-            and manual_active_gases
-            and self.cmb_plot_mode.currentText() != "Separate Gas Plots"
-        ):
-            self.cmb_plot_mode.setCurrentText("Separate Gas Plots")
-            switched_layout = True
-
-        if switched_layout:
-            self.lbl_axis_status.setText(
-                "Axis limits applied. Layout changed to Separate Gas Plots so each gas has its own Y-axis."
-            )
-        else:
-            self.lbl_axis_status.setText("Independent axis limits applied.")
+        self.lbl_axis_status.setText("Axis limits applied.")
         self.lbl_axis_status.setStyleSheet("color: darkgreen; font-weight: bold;")
-
-        if not switched_layout:
-            self._update_data_only()
+        self._update_data_only()
 
     def clear_axis_limits(self, redraw=True):
         self.manual_axis_limits = {
             'time_window_s': None,
-            'gas_by_sensor': {1: None, 2: None, 3: None},
+            'gas': None,
             'temp': None,
             'hum': None,
         }
 
-        edits = [
+        for edit in (
             self.txt_time_window,
+            self.txt_gas_y_min, self.txt_gas_y_max,
             self.txt_temp_y_min, self.txt_temp_y_max,
             self.txt_hum_y_min, self.txt_hum_y_max,
-        ]
-        for sensor_id in range(1, 4):
-            edits.extend((
-                self.txt_gas_y_min[sensor_id],
-                self.txt_gas_y_max[sensor_id],
-            ))
-        for edit in edits:
+        ):
             edit.clear()
 
         self.chk_auto_y.blockSignals(True)
@@ -1355,11 +1194,8 @@ class MainWindow(QMainWindow):
             self.cursor = MultiCursor(self.canvas.fig.canvas, all_axes, color='gray', lw=1, horizOn=True, vertOn=True)
 
     def _update_data_only(self):
-        """Update plotted data and keep independent typed limits active."""
+        """Update plotted data and keep typed limits active as new readings arrive."""
         times_list = list(self.times)
-        gas_limits_by_sensor = self.manual_axis_limits.get(
-            'gas_by_sensor', {1: None, 2: None, 3: None}
-        )
 
         # Gas plots
         for axis, sensors in self.canvas.ax_gas_list:
@@ -1375,21 +1211,9 @@ class MainWindow(QMainWindow):
 
             axis.relim()
             self._set_following_x_limit(axis, times_list)
-
-            manual_ranges = [
-                gas_limits_by_sensor.get(sensor_id)
-                for sensor_id in sensors
-                if gas_limits_by_sensor.get(sensor_id) is not None
-            ]
-            if len(sensors) == 1 and manual_ranges:
-                axis.set_ylim(*manual_ranges[0])
-            elif manual_ranges:
-                # Combined mode has one shared physical Y-axis. Use an envelope
-                # if the user manually switches back after applying ranges.
-                axis.set_ylim(
-                    min(value[0] for value in manual_ranges),
-                    max(value[1] for value in manual_ranges),
-                )
+            gas_limits = self.manual_axis_limits.get('gas')
+            if gas_limits is not None:
+                axis.set_ylim(*gas_limits)
             elif self.auto_y_scale:
                 axis.set_ylim(0, maximum_value * 1.1)
 
