@@ -1,7 +1,7 @@
 """
-ADAM-4017+ Modbus Debug Tool
-==============================
-Interactive terminal tool for testing and debugging ADAM-4017+ connections via Modbus RTU.
+ADAM-4017+ / ADAM-4019+ Modbus Debug Tool
+=========================================
+Interactive terminal tool for testing and debugging ADAM-4017+ and ADAM-4019+ connections via Modbus RTU.
 
 Usage:
     python adam_debug_modbus.py
@@ -10,7 +10,7 @@ Commands:
     scan        - Scan all available COM ports
     open <port> - Open a Modbus connection (e.g. open COM3)
     close       - Close the current connection
-    read        - Read all 8 analog channels via Modbus holding registers
+    read        - Read all 8 analog channels via Modbus holding registers (40001-40008)
     loop [n]    - Continuously read channels (n seconds interval, default 1)
     addr <AA>   - Change the target ADAM Modbus slave address (default: 1)
     baud <rate> - Change baud rate (default: 9600)
@@ -81,14 +81,14 @@ def read_channels():
     if not current_client or not current_client.connected:
         print("  ERROR: No port open. Use 'open <port>' first.")
         return None
-        
+
     try:
         # Holding registers 40001-40008 (address 0 to 7)
         result = current_client.read_holding_registers(address=0, count=8, slave=adam_address)
         if result.isError():
             print(f"  Modbus Error: {result}")
             return None
-            
+
         vals = result.registers
         print()
         print(f"  {'Ch':<5} {'Raw (int)':<12} {'Calibrated':<15} {'Label'}")
@@ -119,18 +119,18 @@ def read_loop(interval):
             header += f" {f'Ch{ch}(int)':<14}"
     print(header)
     print("  " + "-" * (len(header) - 2))
-    
+
     try:
         while True:
             if not current_client or not current_client.connected:
                  print("  Connection lost.")
                  break
-                 
+
             result = current_client.read_holding_registers(address=0, count=8, slave=adam_address)
             if result.isError():
                 time.sleep(interval)
                 continue
-                
+
             vals = result.registers
             ts = time.strftime("%H:%M:%S")
             line = f"  {ts:<12}"
@@ -169,12 +169,12 @@ def show_help():
 
 def main():
     global adam_address, baud_rate
-    
+
     print("=" * 60)
-    print("  ADAM-4017+ Modbus Debug Terminal")
+    print("  ADAM-4017+ / ADAM-4019+ Modbus Debug Terminal")
     print("=" * 60)
     print("  Type 'help' for commands.\n")
-    
+
     while True:
         try:
             status = f"[{current_port or 'no port'}@{baud_rate}|slave:{adam_address}]"
@@ -182,14 +182,14 @@ def main():
         except (EOFError, KeyboardInterrupt):
             print("\n  Exiting.")
             break
-        
+
         if not cmd:
             continue
-        
+
         parts = cmd.split(maxsplit=1)
         action = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
-        
+
         if action in ("quit", "exit"):
             break
         elif action == "help":
@@ -232,7 +232,7 @@ def main():
             set_calibration(arg)
         else:
             print(f"  Unknown command: '{action}'. Type 'help' for commands.")
-    
+
     if current_client and current_client.connected:
         current_client.close()
         print(f"  Closed {current_port}.")

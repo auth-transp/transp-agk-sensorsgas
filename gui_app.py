@@ -78,6 +78,11 @@ class SensorConfigPanel(QGroupBox):
         h_mem = QHBoxLayout(self.w_membrapor)
         h_mem.setContentsMargins(0, 0, 0, 0)
         
+        h_mem.addWidget(QLabel("Model:"))
+        self.cmb_adam_model = QComboBox()
+        self.cmb_adam_model.addItems(["ADAM-4017+", "ADAM-4019+"])
+        h_mem.addWidget(self.cmb_adam_model)
+        
         h_mem.addWidget(QLabel("Ch:"))
         self.cmb_adam_ch = QComboBox()
         self.cmb_adam_ch.addItems([str(i) for i in range(8)])
@@ -613,6 +618,8 @@ class MainWindow(QMainWindow):
                     if 'plot_hum' in cfg:
                         self.sensor_configs[i].chk_plot_hum.setChecked(cfg['plot_hum'])
                     # Membrapor calibration fields
+                    if 'adam_model' in cfg:
+                        self.sensor_configs[i].cmb_adam_model.setCurrentText(str(cfg['adam_model']))
                     if 'adam_channel' in cfg:
                         self.sensor_configs[i].cmb_adam_ch.setCurrentText(str(cfg['adam_channel']))
                     if 'base_val' in cfg:
@@ -645,6 +652,7 @@ class MainWindow(QMainWindow):
                 'plot_hum': panel.chk_plot_hum.isChecked()
             }
             if panel.cmb_brand.currentText() == "Membrapor":
+                entry['adam_model'] = panel.cmb_adam_model.currentText()
                 entry['adam_channel'] = int(panel.cmb_adam_ch.currentText())
                 try:
                     entry['base_val'] = float(panel.txt_base_val.text())
@@ -882,11 +890,12 @@ class MainWindow(QMainWindow):
                         }
                     return cb
                 
+                adam_model = panel.cmb_adam_model.currentText()
                 callback = make_adam_callback(sensor_id, adam_ch, base_val, max_val, max_gas)
                 self.adam_callbacks[sensor_id] = (port_name, callback)
-                adam_manager.subscribe(port_name, callback)
+                adam_manager.subscribe(port_name, callback, model=adam_model)
                 self.on_status_changed(sensor_id, "Connected")
-                panel.lbl_info.setText(f"Info: ADAM Ch{adam_ch} | {base_val}-{max_val} mV → {max_gas} ppm {panel.cmb_gas.currentText()}")
+                panel.lbl_info.setText(f"Info: {adam_model} Ch{adam_ch} | {base_val}-{max_val} mV → {max_gas} ppm {panel.cmb_gas.currentText()}")
         else:
             # Deactivate
             if brand == "Membrapor" or self.adam_callbacks.get(sensor_id):

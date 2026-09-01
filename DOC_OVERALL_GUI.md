@@ -9,9 +9,10 @@ The tool is built using **Python** and **PyQt6**, following a multi-threaded arc
 ### Core Components:
 - **[main.py](file:///e:/github/transp-agk-sensorsgas/main.py)**: The entry point. Initializes the `QApplication` and launches the main window.
 - **[gui_app.py](file:///e:/github/transp-agk-sensorsgas/gui_app.py)**: Contains the `MainWindow` class, `AxisControlDialog` modal, UI layout logic, tab management, plotting canvas builders, and settings persistence.
+- **[adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py)** / **[adam_driver_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_driver_modbus.py)**: Hardware drivers and thread-safe managers for **ADAM-4017+** and **ADAM-4019+** modules.
 - **[data_logger.py](file:///e:/github/transp-agk-sensorsgas/data_logger.py)**: Handles writing of sensor data to CSV files, supporting "passed seconds" timestamps for easy analysis.
 - **[runtime_user_data_fixed.py](file:///e:/github/transp-agk-sensorsgas/runtime_user_data_fixed.py)**: Runtime initialization hook for PyInstaller frozen builds, ensuring settings and log files (`GasSensorMonitor.log`) reside in a persistent per-user folder (`%LOCALAPPDATA%\GasSensorMonitor`).
-- **`settings.json`**: A persistent configuration file that stores COM ports, sensor serial numbers, gas types, calibration parameters, plot layout modes, and manual axis range limits across sessions.
+- **`settings.json`**: A persistent configuration file that stores COM ports, sensor serial numbers, gas types, ADAM model selections (`ADAM-4017+` vs `ADAM-4019+`), calibration parameters, plot layout modes, and manual axis range limits across sessions.
 
 ---
 
@@ -37,6 +38,7 @@ The configuration hub for hardware setup.
 - **Global Settings**: Select the logging frequency (1s, 5s, 10s, 30s) and browse for the destination CSV file.
 - **Per-Sensor Configuration**:
   - **Brand**: Select between **ECSense** (Digital) and **Membrapor** (Analog via ADAM).
+  - **ADAM Model (Membrapor Only)**: Select between **ADAM-4017+** and **ADAM-4019+**.
   - **Port Selection**: Manual COM port assignment or auto-discovery status.
   - **Gas Type**: Define the gas being measured (CO, H2, O2, etc.).
   - **Identify Button**: Toggles the physical LED on the sensor to visually confirm hardware mapping.

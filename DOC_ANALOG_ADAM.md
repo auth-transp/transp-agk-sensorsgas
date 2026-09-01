@@ -1,70 +1,75 @@
-# Membrapor Analog Sensors: ADAM-4017+ Integration
+# Membrapor Analog Sensors: ADAM-4017+ & ADAM-4019+ Integration
 
-This document outlines the support for analog sensors (e.g., Membrapor O2/M-1, CO, H2) using the Advantech ADAM-4017+ Data Acquisition Module.
+This document outlines the support for analog sensors (e.g., Membrapor O2/M-1, CO, H2) using Advantech ADAM Data Acquisition Modules (**ADAM-4017+** and **ADAM-4019+**).
 
 ---
 
-## 1. Hardware Architecture
+## 1. Hardware Architecture & Supported Modules
 
-Unlike digital sensors, analog gas sensors produce a **4-20mA electrical current signal**. This signal is digitized by an **ADAM-4017+ 8-channel Analog-to-Digital Converter (ADC)**.
+Analog gas sensors produce a **4-20mA electrical current signal**. This signal is digitized by an 8-channel Analog-to-Digital Converter (ADC) module:
+
+* **ADAM-4017+**: 8-channel Analog Input Module supporting mV, V, and mA input signals.
+* **ADAM-4019+**: 8-channel Universal Analog Input Module featuring per-channel input type configuration (4–20mA current, voltage, or thermocouple) and hardware jumper/switch configuration (e.g. ADAM-4019+-F switch settings as shown in Figure 3.15 of the Advantech ADAM-4000 manual).
+
+### Connection Details:
 - The ADAM module connects to the host computer via an **RS-485 to USB** adapter.
-- Up to 8 analog sensors can be wired to a single ADAM-4017+ module across Channels 0 through 7.
-- RS-485 communication defaults to **9600 Baud Rate**, **8 Data Bits**, **1 Stop Bit**, and **No Parity (8N1)**.
+- Up to 8 analog sensors can be wired to a single ADAM module across Channels 0 through 7.
+- RS-485 serial communication defaults to **9600 Baud Rate**, **8 Data Bits**, **1 Stop Bit**, and **No Parity (8N1)**.
 
 ---
 
-## 2. Communication Protocols
+## 2. Communication Protocols & Module Identification
 
-The application supports two distinct protocols for interfacing with ADAM hardware:
+The application supports both ASCII and Modbus RTU communication protocols for ADAM-4017+ and ADAM-4019+:
 
 ### A. Advantech ASCII Protocol ([adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py))
-- **Command String**: `#01\r` (where `01` is the 2-character hex address of the module).
-- **Response Format**: `>+04.000+12.500+20.000+00.000+00.000+00.000+00.000+00.000\r`
-- **Parsing**: `Adam4017.parse_response()` extracts 8 float values (in mA or mV) using regular expressions.
+- **Command String**: `#01\r` (where `01` is the 2-character hex module address).
+- **Response Format**: `>+04.000+12.500+20.000+00.000+00.000+00.000+00.000+00.000\r` (Shared format between 4017+ and 4019+).
+- **Module Identification**:
+  - Sending `$01M\r` returns the module model (`!014017+` or `!014019+`).
+  - Sending `$01F\r` returns the firmware version.
 
 ### B. Modbus RTU Protocol ([adam_driver_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_driver_modbus.py))
-- **Interface**: Uses Modbus RTU protocol over RS-485.
-- **Implementation**: `Adam4017Modbus` queries analog input registers starting at offset `0x0000` for 8 channels.
-- **Data Conversion**: Raw register integer counts are converted to engineering units (volts/millivolts/mA) based on configured channel input ranges.
+- Reads 8 holding registers starting at address `0` (registers 40001–40008).
+- Compatible across both ADAM-4017+ and ADAM-4019+ hardware.
 
 ---
 
-## 3. The AdamManager (Thread-Safe Port Sharing)
+## 3. Selecting ADAM Models in the GUI
 
-Because multiple analog GUI sensors may share a single physical RS-485 COM port, direct uncoordinated serial access would lead to packet collisions and Windows `"Access Denied"` serial port errors.
+Users can select which ADAM module model is physically connected when configuring analog sensors:
 
-To solve this, the application uses a singleton **`AdamManager`** ([adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py)):
-- It maintains one single background polling thread (`AdamThread`) for each unique COM port.
-- Individual `SensorThread` instances register/subscribe to the `AdamManager`.
-- The manager polls the ADAM hardware once per second and broadcasts the 8-channel reading array to all subscribers simultaneously.
-- When all subscribers for a COM port are stopped, the manager automatically closes the serial port and shuts down the thread.
+1. In the **Settings Tab**, select **Membrapor** as the sensor brand.
+2. A **Model** dropdown will appear allowing selection between:
+   - `ADAM-4017+` (Default)
+   - `ADAM-4019+`
+3. The selected model is saved in `settings.json` under `"adam_model": "ADAM-4019+"` and displayed in the Main Dashboard status info bar.
 
 ---
 
-## 4. Calibration & Data Mapping
+## 4. The AdamManager (Thread-Safe Port Sharing)
 
-Analog sensors require mathematical scaling to convert measured voltage (mV) or current (mA) to gas PPM/PPB concentration.
+Multiple analog GUI sensors sharing a single physical RS-485 COM port use a singleton **`AdamManager`** ([adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py)):
+- Maintains one single background polling thread (`AdamThread`) per RS-485 COM port.
+- Emits real-time channel arrays to all subscribed sensor panels without serial port contention or `"Access Denied"` errors.
 
-### Scaling Formula:
-The tool applies linear interpolation based on user configuration:
+---
+
+## 5. Calibration & Data Mapping
+
+Analog sensors map voltage (mV) or current (mA) to gas concentration using linear interpolation:
 $$\text{Concentration} = (\text{Raw\_mV} - \text{Base\_mV}) \times \left( \frac{\text{Max\_Gas\_Range}}{\text{Max\_mV} - \text{Base\_mV}} \right)$$
 
-### Configurable Parameters in Settings:
-- **Channel**: Which channel (0 to 7) on the ADAM module the sensor is wired to.
-- **Base mV**: The zero-gas baseline voltage (e.g. 4mA $\approx 0.8\text{V} / 800\text{mV}$).
-- **Max mV**: The full-scale voltage (e.g. 20mA $\approx 4.0\text{V} / 4000\text{mV}$).
-- **Max Gas**: The gas concentration equivalent at full-scale `Max mV` (e.g. 10,000 PPM for O2).
+### Parameters in Settings:
+- **Model**: `ADAM-4017+` or `ADAM-4019+`.
+- **Channel**: Channel index (0 to 7).
+- **Base mV**: Baseline voltage at 0 gas.
+- **Max mV**: Voltage at full scale.
+- **Max Gas**: Gas PPM/PPB at full scale `Max mV`.
 
 ---
 
-## 5. Standalone Diagnostic Utilities
+## 6. Standalone Diagnostic Utilities
 
-Two standalone console scripts are provided for hardware verification outside the main GUI:
-
-1. **[adam_debug.py](file:///e:/github/transp-agk-sensorsgas/adam_debug.py)**:
-   - Scans available COM ports.
-   - Tests Advantech ASCII commands (`#01\r`, `$01M\r`).
-   - Displays real-time live readings for all 8 channels in terminal output.
-2. **[adam_debug_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_debug_modbus.py)**:
-   - Tests Modbus RTU register reading across all 8 channels.
-   - Displays raw integer counts and converted voltage values per channel.
+- **[adam_debug.py](file:///e:/github/transp-agk-sensorsgas/adam_debug.py)**: ASCII protocol CLI debugger with `$AAM` module identification.
+- **[adam_debug_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_debug_modbus.py)**: Modbus RTU protocol CLI debugger for 4017+/4019+.

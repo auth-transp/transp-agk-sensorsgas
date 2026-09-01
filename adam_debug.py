@@ -1,7 +1,7 @@
 """
-ADAM-4017+ Terminal Debug Tool
-==============================
-Interactive terminal tool for testing and debugging ADAM-4017+ connections.
+ADAM-4017+ / ADAM-4019+ Terminal Debug Tool
+===========================================
+Interactive terminal tool for testing and debugging ADAM-4017+ and ADAM-4019+ connections.
 
 Usage:
     python adam_debug.py
@@ -13,7 +13,7 @@ Commands:
     read        - Read all 8 analog channels
     loop [n]    - Continuously read channels (n seconds interval, default 1)
     raw <cmd>   - Send a raw ASCII command and print the response
-    config      - Query lo configuration (#01 -> module name)
+    config      - Query module name ($AAM) and firmware version ($AAF)
     addr <AA>   - Change the target ADAM address (default: 01)
     baud <rate> - Change baud rate (default: 9600)
     cal <ch> <base_ma> <max_ma> <max_gas> - Apply calibration to a channel
@@ -111,8 +111,8 @@ def read_channels():
         print("  Could not parse channel data.")
         return
     print()
-    print(f"  {'Ch':<5} {'Raw (mA)':<12} {'Calibrated':<15} {'Label'}")
-    print(f"  {'--':<5} {'--------':<12} {'----------':<15} {'-----'}")
+    print(f"  {'Ch':<5} {'Raw (mA/mV)':<12} {'Calibrated':<15} {'Label'}")
+    print(f"  {'--':<5} {'-----------':<12} {'----------':<15} {'-----'}")
     for ch, raw in enumerate(vals):
         if ch in calibrations:
             base_ma, max_ma, max_gas, label = calibrations[ch]
@@ -132,10 +132,10 @@ def read_loop(interval):
             _, _, _, label = calibrations[ch]
             header += f" {f'Ch{ch}({label})':<14}"
         else:
-            header += f" {f'Ch{ch}(mA)':<14}"
+            header += f" {f'Ch{ch}':<14}"
     print(header)
     print("  " + "-" * (len(header) - 2))
-    
+
     try:
         while True:
             resp = send_raw(f"#{adam_address}")
@@ -147,7 +147,7 @@ def read_loop(interval):
                 print("  Parse error.")
                 time.sleep(interval)
                 continue
-            
+
             ts = time.strftime("%H:%M:%S")
             line = f"  {ts:<12}"
             for ch, raw in enumerate(vals):
@@ -173,10 +173,19 @@ def set_calibration(args):
         max_gas = float(parts[3])
         label = parts[4] if len(parts) > 4 else f"Ch{ch}"
         calibrations[ch] = (base_ma, max_ma, max_gas, label)
-        print(f"  Ch{ch}: {base_ma} mA -> 0, {max_ma} mA -> {max_gas} [{label}]")
+        print(f"  Ch{ch}: {base_ma} -> 0, {max_ma} -> {max_gas} [{label}]")
     except (IndexError, ValueError):
-        print("  Usage: cal <ch> <base_ma> <max_ma> <max_gas> [label]")
+        print("  Usage: cal <ch> <base_val> <max_val> <max_gas> [label]")
         print("  Example: cal 0 4.0 20.0 25.0 O2%")
+
+
+def query_config():
+    name_resp = send_raw(f"${adam_address}M")
+    fw_resp = send_raw(f"${adam_address}F")
+    if name_resp and name_resp.startswith('!'):
+        print(f"  Detected Module Model: ADAM-{name_resp[3:]}")
+    if fw_resp and fw_resp.startswith('!'):
+        print(f"  Firmware Version: {fw_resp[3:]}")
 
 
 def show_help():
@@ -185,12 +194,12 @@ def show_help():
 
 def main():
     global adam_address, baud_rate
-    
+
     print("=" * 60)
-    print("  ADAM-4017+ Debug Terminal")
+    print("  ADAM-4017+ / ADAM-4019+ Debug Terminal")
     print("=" * 60)
     print("  Type 'help' for commands.\n")
-    
+
     while True:
         try:
             status = f"[{current_port or 'no port'}@{baud_rate}|addr:{adam_address}]"
@@ -198,14 +207,14 @@ def main():
         except (EOFError, KeyboardInterrupt):
             print("\n  Exiting.")
             break
-        
+
         if not cmd:
             continue
-        
+
         parts = cmd.split(maxsplit=1)
         action = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
-        
+
         if action == "quit" or action == "exit":
             break
         elif action == "help":
@@ -230,7 +239,7 @@ def main():
             else:
                 send_raw(arg)
         elif action == "config":
-            send_raw(f"$01M")
+            query_config()
         elif action == "addr":
             if arg:
                 adam_address = arg.strip().zfill(2)
@@ -249,7 +258,7 @@ def main():
             set_calibration(arg)
         else:
             print(f"  Unknown command: '{action}'. Type 'help' for commands.")
-    
+
     if current_ser and current_ser.is_open:
         current_ser.close()
         print(f"  Closed {current_port}.")

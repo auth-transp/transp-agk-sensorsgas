@@ -13,7 +13,8 @@ ecSense is a Python-based multi-threaded graphical application designed for real
     *   Visual status labels indicating connection states (`Connected`, `Connecting`, `Disconnected`, `Error`).
 *   **Dual Hardware Integration**:
     *   **ECSense (Digital)**: Direct interfacing with ECSense TB200B digital gas modules via UART (FTDI USB-to-serial).
-    *   **Membrapor (Analog)**: Reading analog 4-20mA current outputs mapped to gas concentrations using the **Advantech ADAM-4017+** 8-channel ADC module over RS-485 via **Advantech ASCII Protocol** (`adam_driver.py`) or **Modbus RTU Protocol** (`adam_driver_modbus.py`).
+    *   **Membrapor (Analog)**: Reading analog 4-20mA current outputs mapped to gas concentrations using Advantech **ADAM-4017+** or **ADAM-4019+** 8-channel ADC modules over RS-485 via **Advantech ASCII Protocol** (`adam_driver.py`) or **Modbus RTU Protocol** (`adam_driver_modbus.py`).
+    *   **ADAM Model Selector**: GUI dropdown in Settings tab allowing user choice between ADAM-4017+ and ADAM-4019+ hardware.
 *   **Hardware Resiliency & Concurrency**:
     *   **Singleton COM Port Sharing (`AdamManager`)**: A thread-safe management module allowing multiple analog sensors to share a single serial port/adapter without packet collision or "Access Denied" errors.
     *   **FTDI Serial Number Binding**: Prevents misconfiguration due to Windows dynamically re-assigning COM ports. The software maps configuration definitions directly to the physical FTDI chip's unique serial number.
@@ -43,24 +44,24 @@ graph TD
     Thread2 -.-> |UART / ECSense| DigitalSensor
     
     Thread3 -.-> |RS-485 / ASCII or Modbus| AdamManager[adam_driver.py / adam_driver_modbus.py]
-    AdamManager --> AdamADC[ADAM-4017+ ADC Module]
+    AdamManager --> AdamADC[ADAM-4017+ / ADAM-4019+ Module]
     
     GUI --> Settings[%LOCALAPPDATA%/GasSensorMonitor/settings.json]
 ```
 
 ### File Catalog
 *   [main.py](file:///e:/github/transp-agk-sensorsgas/main.py): Application entry point; initializes `QApplication` and styles the GUI with the PyQt Fusion style.
-*   [gui_app.py](file:///e:/github/transp-agk-sensorsgas/gui_app.py): Core graphical interface logic including tab layout, plot builders, axis range controls (`AxisControlDialog`), event-driven signal handlers, and settings persistence.
+*   [gui_app.py](file:///e:/github/transp-agk-sensorsgas/gui_app.py): Core graphical interface logic including tab layout, plot builders, axis range controls (`AxisControlDialog`), ADAM model selector (`ADAM-4017+` vs `ADAM-4019+`), event-driven signal handlers, and settings persistence.
 *   [sensor_thread.py](file:///e:/github/transp-agk-sensorsgas/sensor_thread.py): Implements the `QThread` background loops that query serial sensors at 1Hz and emit updates to the main GUI.
 *   [sensor_driver.py](file:///e:/github/transp-agk-sensorsgas/sensor_driver.py): High/Low-level command set implementation for ECSense serial UART sensors.
 *   [packet_parser.py](file:///e:/github/transp-agk-sensorsgas/packet_parser.py): Decodes binary packet frames from the UART stream and validates checks using an 8-bit checksum algorithm.
-*   [adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py): ASCII protocol driver and singleton manager (`AdamManager`) for Advantech ADAM-4017+ ADC modules.
-*   [adam_driver_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_driver_modbus.py): Alternative Modbus RTU protocol driver (`Adam4017Modbus`) for ADAM-4017+ ADC modules.
+*   [adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py): ASCII protocol driver and singleton manager (`AdamManager`) for Advantech ADAM-4017+ and ADAM-4019+ ADC modules.
+*   [adam_driver_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_driver_modbus.py): Alternative Modbus RTU protocol driver (`AdamModuleModbus`) for ADAM-4017+ and ADAM-4019+ ADC modules.
 *   [data_logger.py](file:///e:/github/transp-agk-sensorsgas/data_logger.py): Thread-safe file writer formatting and appending recorded readings to a CSV sheet.
 *   [runtime_user_data_fixed.py](file:///e:/github/transp-agk-sensorsgas/runtime_user_data_fixed.py): Runtime initialization hook managing per-user settings and log redirection (`GasSensorMonitor.log`) in standalone `.exe` builds.
 *   [BUILD_FIXED_SINGLE_EXE.bat](file:///e:/github/transp-agk-sensorsgas/BUILD_FIXED_SINGLE_EXE.bat): PyInstaller build script for creating single standalone executables.
 *   [RESET_PACKAGED_SETTINGS.bat](file:///e:/github/transp-agk-sensorsgas/RESET_PACKAGED_SETTINGS.bat): Utility batch file to reset standalone executable settings to defaults.
-*   `settings.json`: Configuration file that saves the last loaded sensor bindings (COM ports, serials, brands, gas types, plots, ADAM channel mappings, calibrations, and axis limits).
+*   `settings.json`: Configuration file that saves sensor bindings (COM ports, serials, brands, ADAM models, gas types, plots, ADAM channel mappings, calibrations, and axis limits).
 
 ---
 
@@ -68,9 +69,9 @@ graph TD
 
 To understand communication protocols, user interface operations, and hardware specifications in detail, please refer to the following local documents:
 
-*   📘 **[Overall GUI Architecture & Settings Guide](DOC_OVERALL_GUI.md)**: Details the design of the Main Dashboard tab, Axis Controls dialog, Settings tab, data logging fields, and internal PyQt state management.
-*   📘 **[ECSense Digital Sensors Guide](DOC_ECSENSE_DIGITAL.md)**: Explains the active/passive operation modes, FTDI serial binding, auto-discovery mechanisms, and LED flash controls.
-*   📘 **[Analog Sensors & ADAM-4017+ Integration](DOC_ANALOG_ADAM.md)**: Covers analog 4-20mA ADC parsing, ASCII vs Modbus protocols, the singleton `AdamManager` architecture, and calibration formulas for mapping raw voltage measurements to gas PPM.
+*   📘 **[Overall GUI Architecture & Settings Guide](DOC_OVERALL_GUI.md)**: Details the design of the Main Dashboard tab, Axis Controls dialog, Settings tab (ADAM model selection), data logging fields, and internal PyQt state management.
+*   📘 **[ECSense Digital Sensors Guide](DOC_ECSENSE_DIGITAL.md)**: Explains active/passive operation modes, FTDI serial binding, auto-discovery mechanisms, and LED flash controls.
+*   📘 **[Analog Sensors & ADAM-4017+ / ADAM-4019+ Integration](DOC_ANALOG_ADAM.md)**: Covers analog 4-20mA ADC parsing, ADAM-4017+ vs ADAM-4019+ hardware specs, ASCII vs Modbus protocols, the singleton `AdamManager` architecture, and calibration formulas.
 *   📘 **[TB200B UART Communication Protocol Reference](UART.md)**: Full register, hex command, and byte-frame reference specs for command strings (mode switching, reading, query codes, and checksum logic).
 
 ---
@@ -111,11 +112,11 @@ To package the app into a single standalone Windows executable:
 
 ### Running Diagnostics & Testing
 Standalone command-line testing utilities are provided for testing hardware connections:
-*   **Testing Advantech ADAM ADC Modules (ASCII Protocol)**:
+*   **Testing Advantech ADAM-4017+ / ADAM-4019+ Modules (ASCII Protocol)**:
     ```bash
     python adam_debug.py
     ```
-*   **Testing Advantech ADAM ADC Modules (Modbus Protocol)**:
+*   **Testing Advantech ADAM-4017+ / ADAM-4019+ Modules (Modbus Protocol)**:
     ```bash
     python adam_debug_modbus.py
     ```
