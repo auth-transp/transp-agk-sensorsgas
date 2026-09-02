@@ -3,7 +3,7 @@
     "log_frequency": "1 s",
     "plot_mode": "Separate Gas Plots",
     "1": {
-        "serial_number": "6",
+        "serial_number": "A5069RR4A",
         "brand": "ECSense",
         "gas_type": "H2",
         "plot_gas": true,
@@ -25,7 +25,7 @@
         "plot_gas": true,
         "plot_temp": false,
         "plot_hum": false,
-        "adam_model": "ADAM-4017+",
+        "adam_model": "ADAM-4019+",
         "adam_channel": 1,
         "base_val": 0.9,
         "max_val": 12.0,

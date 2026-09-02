@@ -17,10 +17,11 @@ ecSense is a Python-based multi-threaded graphical application designed for real
     *   **ADAM Model Selector**: GUI dropdown in Settings tab allowing user choice between ADAM-4017+ and ADAM-4019+ hardware.
 *   **Hardware Resiliency & Concurrency**:
     *   **Singleton COM Port Sharing (`AdamManager`)**: A thread-safe management module allowing multiple analog sensors to share a single serial port/adapter without packet collision or "Access Denied" errors.
-    *   **FTDI Serial Number Binding**: Prevents misconfiguration due to Windows dynamically re-assigning COM ports. The software maps configuration definitions directly to the physical FTDI chip's unique serial number.
-    *   **Auto-Reconnect Loop**: Independent `SensorThread` instances running in the background automatically attempt to reconnect to hardware if a cable is unplugged, ensuring the application remains crash-free.
-    *   **Auto-Discovery by Gas Type**: Scans available serial ports and queries basic metadata (`0xD1` command) to auto-bind to the correct sensor based on the desired gas type configuration.
-    *   **Visual LED Identification**: Remotely toggles the sensor's physical onboard running lights to identify modules in a multi-sensor array.
+*   **FTDI Serial Number Binding**: Prevents misconfiguration due to Windows dynamically re-assigning COM ports. The software maps configuration definitions directly to the physical FTDI chip's unique serial number.
+*   **Auto-Reconnect Loop**: Both `SensorThread` (ECSense digital) and `AdamThread` (Membrapor analog) run independent background reconnect loops. If a cable is unplugged, the thread retries automatically without crashing the GUI. `AdamThread` additionally triggers a reconnect after 5 consecutive failed reads.
+*   **Auto-Discovery by Gas Type**: Scans available serial ports and queries basic metadata (`0xD1` command) to auto-bind to the correct sensor based on the desired gas type configuration.
+*   **Visual LED Identification**: Remotely toggles the sensor's physical onboard running lights to identify modules in a multi-sensor array.
+*   **ADAM-4019+ Fixed-Width Parser**: The ADAM-4019+ returns inactive channels as 7-space-padded fields (not signed numeric tokens). The ASCII driver uses fixed-width 7-char slices to parse all 8 channels correctly, with a regex fallback for older ADAM-4017+ compact responses.
 *   **Configurable Data Logging & Deployment**:
     *   Saves data directly to CSV with high-resolution timestamps and relative "passed seconds" elapsed timers.
     *   Adjustable logging frequencies (1s, 5s, 10s, 30s) running on isolated timers to avoid GUI blockage.
@@ -55,11 +56,14 @@ graph TD
 *   [sensor_thread.py](file:///e:/github/transp-agk-sensorsgas/sensor_thread.py): Implements the `QThread` background loops that query serial sensors at 1Hz and emit updates to the main GUI.
 *   [sensor_driver.py](file:///e:/github/transp-agk-sensorsgas/sensor_driver.py): High/Low-level command set implementation for ECSense serial UART sensors.
 *   [packet_parser.py](file:///e:/github/transp-agk-sensorsgas/packet_parser.py): Decodes binary packet frames from the UART stream and validates checks using an 8-bit checksum algorithm.
-*   [adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py): ASCII protocol driver and singleton manager (`AdamManager`) for Advantech ADAM-4017+ and ADAM-4019+ ADC modules.
-*   [adam_driver_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_driver_modbus.py): Alternative Modbus RTU protocol driver (`AdamModuleModbus`) for ADAM-4017+ and ADAM-4019+ ADC modules.
+*   [adam_driver.py](file:///e:/github/transp-agk-sensorsgas/adam_driver.py): ASCII protocol driver and singleton manager (`AdamManager`) for Advantech ADAM-4017+ and ADAM-4019+ ADC modules. Parses the ADAM-4019+ 7-char fixed-width channel format. Includes auto-reconnect loop in `AdamThread`.
+*   [adam_driver_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_driver_modbus.py): Alternative Modbus RTU protocol driver (`AdamModuleModbus` / `AdamManagerModbus`) for ADAM-4017+ and ADAM-4019+ ADC modules.
 *   [data_logger.py](file:///e:/github/transp-agk-sensorsgas/data_logger.py): Thread-safe file writer formatting and appending recorded readings to a CSV sheet.
 *   [runtime_user_data_fixed.py](file:///e:/github/transp-agk-sensorsgas/runtime_user_data_fixed.py): Runtime initialization hook managing per-user settings and log redirection (`GasSensorMonitor.log`) in standalone `.exe` builds.
-*   [BUILD_FIXED_SINGLE_EXE.bat](file:///e:/github/transp-agk-sensorsgas/BUILD_FIXED_SINGLE_EXE.bat): PyInstaller build script for creating single standalone executables.
+*   [adam_debug.py](file:///e:/github/transp-agk-sensorsgas/adam_debug.py): Interactive ASCII protocol terminal debugger for ADAM-4017+/4019+ — scan ports, read channels, run calibrated live loop, send raw commands.
+*   [adam_debug_modbus.py](file:///e:/github/transp-agk-sensorsgas/adam_debug_modbus.py): Interactive Modbus RTU terminal debugger for ADAM-4017+/4019+ — same interface as `adam_debug.py` but over Modbus, raw integer register values.
+*   [debug_uart.py](file:///e:/github/transp-agk-sensorsgas/debug_uart.py): Non-interactive UART diagnostic script for ECSense TB200B sensors — sends all command variants and validates checksums.
+*   [BUILD_FIXED_SINGLE_EXE.bat](file:///e:/github/transp-agk-sensorsgas/BUILD_FIXED_SINGLE_EXE.bat): PyInstaller build script. Uses `.venv` Python. Produces a **single-file** `dist\GasSensorMonitor.exe` (~55 MB).
 *   [RESET_PACKAGED_SETTINGS.bat](file:///e:/github/transp-agk-sensorsgas/RESET_PACKAGED_SETTINGS.bat): Utility batch file to reset standalone executable settings to defaults.
 *   `settings.json`: Configuration file that saves sensor bindings (COM ports, serials, brands, ADAM models, gas types, plots, ADAM channel mappings, calibrations, and axis limits).
 
@@ -101,26 +105,44 @@ python main.py
 ```
 
 ### Building & Running Standalone Executable (.exe)
-To package the app into a single standalone Windows executable:
+To package the app into a **single-file** Windows executable:
+
+> **Prerequisite:** The project `.venv` must exist with dependencies installed (`pip install -r requirements.txt`). PyInstaller is installed automatically into the venv on first build.
+
 1.  Run the build script:
     ```cmd
     BUILD_FIXED_SINGLE_EXE.bat
     ```
-2.  The compiled executable will be output to `dist\GasSensorMonitor.exe`.
+2.  The compiled executable will be output to **`dist\GasSensorMonitor.exe`** (single file, ~61 MB).
 3.  Application logs and user configuration will be maintained under `%LOCALAPPDATA%\GasSensorMonitor\`.
-4.  To reset settings to defaults for the executable, run `RESET_PACKAGED_SETTINGS.bat`.
+4.  The bundled `settings.json` is copied to the user folder on first launch. Run `RESET_PACKAGED_SETTINGS.bat` to restore defaults.
+
+> **Note:** PyInstaller may exit with code 1 due to harmless cross-platform import warnings (Linux/macOS modules like `grp`, `pwd`, `termios`). The build script ignores this exit code and checks for the EXE file directly.
+
+#### Known Build / Runtime Issues
+
+| Symptom | Root cause | Fix |
+| :--- | :--- | :--- |
+| `ModuleNotFoundError: No module named 'PIL'` on EXE launch | `matplotlib 3.10+` imports `PIL.Image` from `matplotlib.colors` at startup — it is no longer optional. | `PIL` must **not** be in `excludes`; `PIL`, `PIL.Image`, `PIL.BmpImagePlugin`, `PIL.PngImagePlugin` are listed as `hiddenimports` in the `.spec`. |
+| `ModuleNotFoundError: No module named 'unittest'` on EXE launch | `pyparsing.testing` imports `unittest` at module load time, pulled in via `matplotlib._fontconfig_pattern` → `pyparsing` → `pyparsing.testing`. | `unittest` must **not** be in `excludes`. It has been removed; a guard comment in the `.spec` explains why. |
+| Build exits code 1 even on success | PyInstaller writes cross-platform warnings (`grp`, `pwd`, `termios`) to stderr; some shells treat any stderr output as an error. | Normal — check that `dist\GasSensorMonitor.exe` exists. The `.bat` script does this already. |
+| App starts but settings reset every run | The `.corrected_build_v2_defaults_installed` marker was deleted or the EXE was rebuilt without first deleting `%LOCALAPPDATA%\GasSensorMonitor\`. | Run `RESET_PACKAGED_SETTINGS.bat` then relaunch. |
 
 ### Running Diagnostics & Testing
-Standalone command-line testing utilities are provided for testing hardware connections:
-*   **Testing Advantech ADAM-4017+ / ADAM-4019+ Modules (ASCII Protocol)**:
+Standalone command-line utilities for verifying hardware connections independently of the GUI:
+
+*   **ADAM-4017+ / ADAM-4019+ (ASCII Protocol)** — interactive terminal:
     ```bash
     python adam_debug.py
+    # then: open COM7 → config → read → loop 1
     ```
-*   **Testing Advantech ADAM-4017+ / ADAM-4019+ Modules (Modbus Protocol)**:
+*   **ADAM-4017+ / ADAM-4019+ (Modbus RTU)** — interactive terminal:
     ```bash
     python adam_debug_modbus.py
+    # then: open COM7 → read → loop 1
     ```
-*   **Testing UART Packet Parsing (ECSense Digital Sensors)**:
+*   **ECSense TB200B UART** — non-interactive, tests all command variants:
     ```bash
-    python debug_uart.py
+    python debug_uart.py --port COM3
     ```
+    See [DOC_ECSENSE_DIGITAL.md](DOC_ECSENSE_DIGITAL.md) Section 5 for details on what each test checks.

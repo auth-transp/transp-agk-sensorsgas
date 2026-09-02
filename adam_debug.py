@@ -84,7 +84,7 @@ def send_raw(cmd_str):
         current_ser.reset_input_buffer()
         current_ser.write(cmd_bytes)
         resp = current_ser.read_until(b'\r')
-        resp_str = resp.decode('ascii', errors='replace').strip()
+        resp_str = resp.decode('ascii', errors='replace').rstrip('\r\n')
         print(f"  RX: {repr(resp_str)}  ({len(resp)} bytes)")
         return resp_str
     except Exception as e:
@@ -95,10 +95,27 @@ def send_raw(cmd_str):
 def parse_channels(resp_str):
     if not resp_str or not resp_str.startswith('>'):
         return None
-    data = resp_str[1:]
+    data = resp_str[1:]  # strip leading '>'
+
+    # --- Primary: fixed-width 7-char per channel (ADAM-4019+ format) ---
+    # Response body is exactly 56 chars (8 channels × 7 chars each).
+    # Inactive channels appear as 7 spaces; active ones as e.g. '+009.73'.
+    if len(data) >= 56:
+        values = []
+        for i in range(8):
+            chunk = data[i * 7:(i + 1) * 7]
+            stripped = chunk.strip()
+            try:
+                values.append(float(stripped) if stripped else 0.0)
+            except ValueError:
+                values.append(0.0)
+        return values
+
+    # --- Fallback: regex for older ADAM-4017+ compact format ---
     matches = re.findall(r'[-+]\d+(?:\.\d+)?', data)
     if len(matches) == 8:
         return [float(m) for m in matches]
+
     return None
 
 

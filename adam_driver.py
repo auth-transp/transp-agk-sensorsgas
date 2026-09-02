@@ -66,6 +66,16 @@ class AdamModule:
         Sends '#AA\\r' command to read all 8 analog channels via Advantech ASCII protocol.
         Compatible with both ADAM-4017+ and ADAM-4019+.
         Returns a list of 8 float values (e.g., in mA or V).
+
+        The ADAM-4019+ (and some 4017+ firmware versions) uses a fixed-width
+        7-character-per-channel format where inactive/unconfigured channels are
+        returned as 7 spaces rather than a signed numeric value. The old regex
+        approach only matched explicitly-signed values and therefore missed
+        space-padded channels, returning fewer than 8 matches.
+
+        This implementation parses the 56-byte data body (after the leading '>')
+        as eight consecutive 7-character fields and converts space-only fields to
+        0.0 so that all 8 channel values are always returned.
         """
         cmd = f"#{self.address}\r".encode('ascii')
         own_serial = False
@@ -75,15 +85,34 @@ class AdamModule:
 
         try:
             ser.write(cmd)
-            resp = ser.read_until(b'\r').decode('ascii').strip()
+            resp = ser.read_until(b'\r').decode('ascii').rstrip('\r\n')
 
-            # Expected response: >+04.000+04.000...
-            if resp.startswith('>'):
-                data = resp[1:]
-                # Extract all numbers formatted like +04.000, -01.234, or +888888
-                matches = re.findall(r'[-+]\d+(?:\.\d+)?', data)
-                if len(matches) == 8:
-                    return [float(m) for m in matches]
+            if not resp.startswith('>'):
+                return None
+
+            data = resp[1:]  # Strip leading '>'
+
+            # --- Primary: fixed-width 7-char per channel (ADAM-4019+ format) ---
+            # Response body is exactly 56 chars (8 channels × 7 chars each).
+            # Inactive channels appear as 7 spaces; active ones as e.g. '+009.73'.
+            if len(data) >= 56:
+                values = []
+                for i in range(8):
+                    chunk = data[i * 7:(i + 1) * 7]
+                    stripped = chunk.strip()
+                    try:
+                        values.append(float(stripped) if stripped else 0.0)
+                    except ValueError:
+                        values.append(0.0)
+                return values
+
+            # --- Fallback: regex for older ADAM-4017+ compact format ---
+            # Some firmware versions omit the space-padding and return only
+            # signed numeric tokens separated directly (e.g. '+04.000+04.000...')
+            matches = re.findall(r'[-+]\d+(?:\.\d+)?', data)
+            if len(matches) == 8:
+                return [float(m) for m in matches]
+
             return None
         except Exception as e:
             print(f"ADAM Read Error: {e}")
@@ -112,18 +141,35 @@ class AdamThread(QThread):
     def run(self):
         self.is_running = True
         adam = AdamModule(self.port, self.baudrate, self.address, model=self.model)
-        try:
-            with serial.Serial(self.port, self.baudrate, timeout=1.0) as ser:
-                while self.is_running:
-                    vals = adam.read_all_channels(ser)
-                    if vals:
-                        self.data_received.emit(vals)
-                    else:
-                        self.error_occurred.emit(f"Invalid or missing response from {self.model} module.")
-                    time.sleep(1.0)
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-            self.is_running = False
+
+        while self.is_running:
+            try:
+                with serial.Serial(self.port, self.baudrate, timeout=1.0) as ser:
+                    self.error_occurred.emit(f"{self.model} connected on {self.port}")
+                    consecutive_failures = 0
+                    while self.is_running:
+                        vals = adam.read_all_channels(ser)
+                        if vals is not None:
+                            consecutive_failures = 0
+                            self.data_received.emit(vals)
+                        else:
+                            consecutive_failures += 1
+                            self.error_occurred.emit(
+                                f"{self.model}: no valid response (attempt {consecutive_failures})"
+                            )
+                            if consecutive_failures >= 5:
+                                # Break inner loop to trigger reconnect
+                                break
+                        time.sleep(1.0)
+            except Exception as e:
+                self.error_occurred.emit(f"{self.model} on {self.port}: {e}")
+
+            if self.is_running:
+                # Wait 3 s before reconnect attempt
+                for _ in range(30):
+                    if not self.is_running:
+                        break
+                    time.sleep(0.1)
 
     def stop(self):
         self.is_running = False

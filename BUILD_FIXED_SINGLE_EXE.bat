@@ -1,104 +1,109 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Build Corrected Gas Sensor Monitor EXE
+title Build Gas Sensor Monitor EXE
 
 echo ============================================================
-echo   Building GasSensorMonitor.exe
-echo   - PyQt6 and Matplotlib/QtAgg graphs included
-echo   - Current settings.json included
+echo   Building GasSensorMonitor.exe  (single-file)
+echo   - PyQt6 and Matplotlib/QtAgg included
+echo   - Current settings.json bundled as default config
 echo ============================================================
 echo.
 
+:: ----------------------------------------------------------------
+:: Validate required files
+:: ----------------------------------------------------------------
 if not exist "main.py" (
-    echo ERROR: main.py was not found in directory: %CD%
-    echo Make sure you run BUILD_FIXED_SINGLE_EXE.bat inside the project folder containing main.py.
-    echo.
-    pause
-    exit /b 1
+    echo ERROR: main.py not found in %CD%
+    pause & exit /b 1
 )
-
 if not exist "gui_app.py" (
-    echo ERROR: gui_app.py was not found.
-    echo.
-    pause
-    exit /b 1
+    echo ERROR: gui_app.py not found.
+    pause & exit /b 1
 )
-
 if not exist "settings.json" (
-    echo ERROR: settings.json was not found.
-    echo.
-    pause
-    exit /b 1
+    echo ERROR: settings.json not found.
+    pause & exit /b 1
 )
-
 if not exist "GasSensorMonitor_fixed.spec" (
-    echo ERROR: GasSensorMonitor_fixed.spec was not found.
-    echo.
-    pause
-    exit /b 1
+    echo ERROR: GasSensorMonitor_fixed.spec not found.
+    pause & exit /b 1
 )
-
 if not exist "runtime_user_data_fixed.py" (
-    echo ERROR: runtime_user_data_fixed.py was not found.
+    echo ERROR: runtime_user_data_fixed.py not found.
+    pause & exit /b 1
+)
+
+:: ----------------------------------------------------------------
+:: Use the project virtual environment
+:: ----------------------------------------------------------------
+set "PY_CMD=%~dp0.venv\Scripts\python.exe"
+if not exist "%PY_CMD%" (
+    echo ERROR: .venv not found. Please create it first:
+    echo   python -m venv .venv
+    echo   .venv\Scripts\pip install -r requirements.txt
+    pause & exit /b 1
+)
+
+echo Using: %PY_CMD%
+echo.
+
+:: ----------------------------------------------------------------
+:: [1/4] Syntax check
+:: ----------------------------------------------------------------
+echo [1/4] Checking source files for syntax errors...
+"%PY_CMD%" -m py_compile main.py gui_app.py sensor_thread.py sensor_driver.py packet_parser.py adam_driver.py adam_driver_modbus.py data_logger.py runtime_user_data_fixed.py
+if errorlevel 1 (
     echo.
-    pause
-    exit /b 1
+    echo ERROR: Syntax error found. Fix before building.
+    pause & exit /b 1
 )
 
-set "PY_CMD="
-
-py -c "import PyQt6" >nul 2>&1
-if not errorlevel 1 set "PY_CMD=py"
-
-if "%PY_CMD%"=="" (
-    python -c "import PyQt6" >nul 2>&1
-    if not errorlevel 1 set "PY_CMD=python"
+:: ----------------------------------------------------------------
+:: [2/4] Ensure PyInstaller is installed in the venv
+:: ----------------------------------------------------------------
+echo.
+echo [2/4] Ensuring PyInstaller is available in .venv...
+"%PY_CMD%" -c "import PyInstaller" >nul 2>&1
+if errorlevel 1 (
+    echo   Installing PyInstaller into .venv...
+    "%PY_CMD%" -m pip install --quiet "pyinstaller" "pyinstaller-hooks-contrib"
+    if errorlevel 1 goto :failed
+) else (
+    echo   PyInstaller already installed.
 )
 
-if "%PY_CMD%"=="" (
-    echo ERROR: Could not find a Python installation with PyQt6 installed.
-    echo Please ensure PyQt6 is installed by running: py -m pip install PyQt6
-    echo.
-    pause
-    exit /b 1
-)
-
-echo Using Python command: %PY_CMD%
-
+:: ----------------------------------------------------------------
+:: [3/4] Clean previous build output
+:: ----------------------------------------------------------------
 echo.
-echo [1/4] Checking the exact source program...
-%PY_CMD% -m py_compile main.py gui_app.py
-if errorlevel 1 goto :failed
-
-echo.
-echo [2/4] Ensuring PyInstaller is installed...
-%PY_CMD% -m pip install "pyinstaller" "pyinstaller-hooks-contrib"
-if errorlevel 1 goto :failed
-
-echo.
-echo [3/4] Removing previous build output...
+echo [3/4] Cleaning previous build output...
 if exist "build" rmdir /s /q "build"
 if exist "dist\GasSensorMonitor.exe" del /q "dist\GasSensorMonitor.exe"
+if exist "dist\GasSensorMonitor"     rmdir /s /q "dist\GasSensorMonitor"
 
+:: ----------------------------------------------------------------
+:: [4/4] Build
+:: ----------------------------------------------------------------
 echo.
-echo [4/4] Building single executable...
-%PY_CMD% -m PyInstaller --noconfirm --clean "GasSensorMonitor_fixed.spec"
-if errorlevel 1 goto :failed
+echo [4/4] Building single-file executable (this takes 1-3 minutes)...
+"%PY_CMD%" -m PyInstaller --noconfirm --clean "GasSensorMonitor_fixed.spec"
+:: PyInstaller exits with code 1 when optional/cross-platform imports are
+:: warned about (e.g. Linux/macOS modules like 'grp', 'pwd', 'termios').
+:: These are harmless on Windows. Check for the actual EXE instead.
 
 if not exist "dist\GasSensorMonitor.exe" goto :failed
 
 echo.
 echo ============================================================
-echo SUCCESS
+echo   BUILD SUCCESSFUL
 echo ============================================================
 echo.
-echo Executable created:
-echo %CD%\dist\GasSensorMonitor.exe
+echo Output:  %CD%\dist\GasSensorMonitor.exe
 echo.
-echo IMPORTANT:
-echo This build installs the settings.json currently in this project
-echo folder the first time it runs. Test the new EXE before sending it.
+echo NOTE: The first time this EXE runs it will copy the bundled
+echo settings.json to %%LOCALAPPDATA%%\GasSensorMonitor\.
+echo Run RESET_PACKAGED_SETTINGS.bat to restore defaults if needed.
 echo.
 pause
 exit /b 0
@@ -106,9 +111,9 @@ exit /b 0
 :failed
 echo.
 echo ============================================================
-echo BUILD FAILED
+echo   BUILD FAILED
 echo ============================================================
-echo Review the error shown above. Your source files were not deleted.
+echo Review the error above. Your source files were not modified.
 echo.
 pause
 exit /b 1
