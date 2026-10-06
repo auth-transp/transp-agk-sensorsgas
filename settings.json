@@ -11,7 +11,7 @@
         "plot_hum": false
     },
     "2": {
-        "serial_number": "A5069RR4A",
+        "serial_number": "7",
         "brand": "ECSense",
         "gas_type": "CO",
         "plot_gas": true,
@@ -30,5 +30,35 @@
         "base_val": 0.9,
         "max_val": 12.0,
         "max_gas": 10000.0
+    },
+    "pressure": {
+        "1": {
+            "port": "COM9",
+            "adam_model": "ADAM-4019+",
+            "adam_channel": 2,
+            "v_min": 0.6,
+            "p_min": 0.0,
+            "v_max": 2.0,
+            "p_max": 750.0,
+            "alarm_enabled": true,
+            "alarm_high": 200.0,
+            "alarm_low": 4.0,
+            "audio_enabled": true,
+            "plot_press": true
+        },
+        "2": {
+            "port": "COM9",
+            "adam_model": "ADAM-4019+",
+            "adam_channel": 3,
+            "v_min": 0.0,
+            "p_min": 0.0,
+            "v_max": 10.0,
+            "p_max": 2000.0,
+            "alarm_enabled": true,
+            "alarm_high": 1800.0,
+            "alarm_low": 50.0,
+            "audio_enabled": true,
+            "plot_press": true
+        }
     }
 }

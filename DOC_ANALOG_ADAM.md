@@ -130,3 +130,35 @@ python adam_debug_modbus.py
 | `addr 1` | Modbus slave address (integer, default `1`) |
 | `cal 1 13107 65535 25.0 O2%` | Calibration using raw int counts (4mA=13107, 20mA=65535) |
 
+---
+
+## 7. Dual Pressure Sensor Support (P1 & P2)
+
+The application supports two additional pressure sensors (labeled **P1** and **P2**) acquired via the same Advantech ADAM module:
+
+### Configuration in GUI (Settings Tab)
+- **Model**: `ADAM-4017+` or `ADAM-4019+`.
+- **Channel**: Channel index (0 to 7) on the ADAM module (e.g., Ch 2 for P1, Ch 3 for P2).
+- **Linear Calibration Range**: Two pairs of $(V, \text{mbar})$:
+  - $V_{min}$ (Volts) $\rightarrow P_{min}$ (mbar)
+  - $V_{max}$ (Volts) $\rightarrow P_{max}$ (mbar)
+  $$\text{Pressure (mbar)} = P_{min} + (V_{\text{raw}} - V_{min}) \times \left( \frac{P_{max} - P_{min}}{V_{max} - V_{min}} \right)$$
+- **Alarms**:
+  - High Limit (Overpressure) in mbar.
+  - Low Limit (Underpressure) in mbar.
+  - Sound Alert checkbox (throttled system audio alert).
+- **Plotting**: Individual checkbox to toggle P1/P2 plotting on the shared Pressure chart.
+
+### Real-Time Dashboard & Display
+- **Shared Pressure Chart**: Placed in the bottom row side-by-side with Temperature and Humidity charts.
+- **Visual Alarm Lines**: Red dashed horizontal threshold lines indicating configured high pressure limits.
+- **Flashing Alarm Banner**: High-visibility non-blocking banner across the top of the chart when pressure violates safety thresholds.
+- **Flashing Sidebar Cards**: Pressure readout boxes pulse in red during alarm conditions.
+- **Axis Controls**: Independent manual Y-axis limits for Pressure in the popup Axis Control dialog (`txt_press_y_min` / `txt_press_y_max`).
+
+### Data Logging
+Pressure readings are saved to the CSV log with four dedicated columns:
+- `P1_pressure_mbar`, `P1_voltage_v`
+- `P2_pressure_mbar`, `P2_voltage_v`
+
+

@@ -157,12 +157,101 @@ class SensorConfigPanel(QGroupBox):
             self.chk_plot_temp.setEnabled(True)
             self.chk_plot_hum.setEnabled(True)
 
+try:
+    import winsound
+except ImportError:
+    winsound = None
+
+class PressureConfigPanel(QGroupBox):
+    def __init__(self, pressure_id, parent=None):
+        super().__init__(f"Pressure {pressure_id} (P{pressure_id})", parent)
+        self.pressure_id = pressure_id
+        
+        layout = QVBoxLayout()
+        
+        # Row 1: COM Port, ADAM Model, Channel
+        h1 = QHBoxLayout()
+        h1.addWidget(QLabel("Port:"))
+        self.cmb_port = QComboBox()
+        h1.addWidget(self.cmb_port)
+        
+        h1.addWidget(QLabel("Model:"))
+        self.cmb_adam_model = QComboBox()
+        self.cmb_adam_model.addItems(["ADAM-4017+", "ADAM-4019+"])
+        self.cmb_adam_model.setCurrentText("ADAM-4019+")
+        h1.addWidget(self.cmb_adam_model)
+        
+        h1.addWidget(QLabel("Ch:"))
+        self.cmb_adam_ch = QComboBox()
+        self.cmb_adam_ch.addItems([str(i) for i in range(8)])
+        self.cmb_adam_ch.setCurrentIndex(min(pressure_id + 1, 7))
+        h1.addWidget(self.cmb_adam_ch)
+        layout.addLayout(h1)
+        
+        # Row 2: Calibration (Linear Interpolation Pairs of V and mbar)
+        h_cal = QGridLayout()
+        h_cal.addWidget(QLabel("V Min (V):"), 0, 0)
+        self.txt_v_min = QLineEdit("0.0")
+        self.txt_v_min.setFixedWidth(50)
+        h_cal.addWidget(self.txt_v_min, 0, 1)
+        
+        h_cal.addWidget(QLabel("P Min (mbar):"), 0, 2)
+        self.txt_p_min = QLineEdit("0.0")
+        self.txt_p_min.setFixedWidth(60)
+        h_cal.addWidget(self.txt_p_min, 0, 3)
+        
+        h_cal.addWidget(QLabel("V Max (V):"), 1, 0)
+        self.txt_v_max = QLineEdit("10.0")
+        self.txt_v_max.setFixedWidth(50)
+        h_cal.addWidget(self.txt_v_max, 1, 1)
+        
+        h_cal.addWidget(QLabel("P Max (mbar):"), 1, 2)
+        self.txt_p_max = QLineEdit("2000.0")
+        self.txt_p_max.setFixedWidth(60)
+        h_cal.addWidget(self.txt_p_max, 1, 3)
+        layout.addLayout(h_cal)
+        
+        # Row 3: Alarms
+        h_alarm = QHBoxLayout()
+        self.chk_alarm_enable = QCheckBox("Alarm")
+        self.chk_alarm_enable.setChecked(True)
+        h_alarm.addWidget(self.chk_alarm_enable)
+        
+        h_alarm.addWidget(QLabel("High (mbar):"))
+        self.txt_alarm_high = QLineEdit("1800.0")
+        self.txt_alarm_high.setFixedWidth(55)
+        h_alarm.addWidget(self.txt_alarm_high)
+        
+        h_alarm.addWidget(QLabel("Low (mbar):"))
+        self.txt_alarm_low = QLineEdit("50.0")
+        self.txt_alarm_low.setFixedWidth(55)
+        h_alarm.addWidget(self.txt_alarm_low)
+        
+        self.chk_audio_alarm = QCheckBox("Sound")
+        self.chk_audio_alarm.setChecked(True)
+        h_alarm.addWidget(self.chk_audio_alarm)
+        layout.addLayout(h_alarm)
+        
+        # Row 4: Plot Toggle and Live Readout
+        h_bot = QHBoxLayout()
+        self.chk_plot_press = QCheckBox(f"Plot P{pressure_id}")
+        self.chk_plot_press.setChecked(True)
+        h_bot.addWidget(self.chk_plot_press)
+        
+        self.lbl_live_readout = QLabel("Live: -- V | -- mbar")
+        self.lbl_live_readout.setStyleSheet("font-weight: bold; color: darkblue;")
+        h_bot.addWidget(self.lbl_live_readout)
+        layout.addLayout(h_bot)
+        
+        self.setLayout(layout)
+
 class PlotCanvas(FigureCanvas):
     def __init__(self, parent=None, width=10, height=8, dpi=100):
         self.fig = Figure(figsize=(width, height), dpi=dpi)
         self.ax_gas_list = []
         self.ax_temp = None
         self.ax_hum = None
+        self.ax_press = None
         
         super().__init__(self.fig)
         self.setParent(parent)
@@ -200,6 +289,7 @@ class MainWindow(QMainWindow):
             'gas_by_sensor': {1: None, 2: None, 3: None},
             'temp': None,
             'hum': None,
+            'press': None,
         }
         self._current_layout_key = None  # tracks when plot structure needs rebuild
         self._lines = {}  # stores Line2D objects keyed by (role, sensor_id)
@@ -211,6 +301,20 @@ class MainWindow(QMainWindow):
         self.available_ports = {}
         self.adam_callbacks = {1: None, 2: None, 3: None}  # track ADAM subscriptions
         self.adam_raw_mv = {1: deque(maxlen=60), 2: deque(maxlen=60), 3: deque(maxlen=60)}
+        
+        # Pressure sensors (P1 & P2 via ADAM)
+        self.pressure_configs = {}
+        self.latest_pressure = {1: None, 2: None}
+        self.historical_pressure = {1: deque(), 2: deque()}
+        self.pressure_adam_callbacks = {1: None, 2: None}
+        self.pressure_colors = {1: '#0084d1', 2: '#d91b5c'}
+        self.alarm_states = {1: {'high': False, 'low': False}, 2: {'high': False, 'low': False}}
+        self._last_beep_time = 0
+        self._flash_toggle = False
+        
+        self.alarm_flash_timer = QTimer()
+        self.alarm_flash_timer.timeout.connect(self._on_alarm_flash_tick)
+        self.alarm_flash_timer.start(500)
         
         self.historical_data = {
             1: {'gas': deque(), 'temp': deque(), 'hum': deque()},
@@ -239,6 +343,10 @@ class MainWindow(QMainWindow):
             self.sensor_configs[i].chk_plot_temp.toggled.connect(lambda _: self._force_layout_rebuild())
             self.sensor_configs[i].chk_plot_hum.toggled.connect(lambda _: self._force_layout_rebuild())
             self.sensor_configs[i].cmb_gas.currentTextChanged.connect(self._on_axis_gas_name_changed)
+
+        for p in (1, 2):
+            if p in self.pressure_configs:
+                self.pressure_configs[p].chk_plot_press.toggled.connect(lambda _: self._force_layout_rebuild())
 
         
         self.plot_timer = QTimer()
@@ -272,6 +380,26 @@ class MainWindow(QMainWindow):
             top_layout.addWidget(lbl)
             top_layout.addSpacing(15)
             
+        sep = QLabel("|")
+        sep.setStyleSheet("color: #aaa; font-weight: bold; font-size: 14px;")
+        top_layout.addWidget(sep)
+        top_layout.addSpacing(10)
+
+        self.chk_activate_press = {}
+        self.lbl_status_press = {}
+        for p in (1, 2):
+            chk = QCheckBox(f"Activate P{p}")
+            chk.toggled.connect(lambda checked, idx=p: self.toggle_pressure(idx, checked))
+            self.chk_activate_press[p] = chk
+
+            lbl = QLabel("Not Active")
+            lbl.setStyleSheet("color: gray; font-weight: bold;")
+            self.lbl_status_press[p] = lbl
+
+            top_layout.addWidget(chk)
+            top_layout.addWidget(lbl)
+            top_layout.addSpacing(15)
+
         top_layout.addStretch()
         
         self.cmb_plot_mode = QComboBox()
@@ -365,10 +493,19 @@ class MainWindow(QMainWindow):
         axis_grid.addWidget(self.txt_hum_y_min, 5, 1)
         axis_grid.addWidget(self.txt_hum_y_max, 5, 2)
 
+        self.txt_press_y_min = QLineEdit()
+        self.txt_press_y_max = QLineEdit()
+        self.txt_press_y_min.setFixedWidth(76)
+        self.txt_press_y_max.setFixedWidth(76)
+        axis_grid.addWidget(QLabel("Pressure:"), 6, 0)
+        axis_grid.addWidget(self.txt_press_y_min, 6, 1)
+        axis_grid.addWidget(self.txt_press_y_max, 6, 2)
+
         all_axis_edits = [
             self.txt_time_window,
             self.txt_temp_y_min, self.txt_temp_y_max,
             self.txt_hum_y_min, self.txt_hum_y_max,
+            self.txt_press_y_min, self.txt_press_y_max,
         ]
         for sensor_id in range(1, 4):
             all_axis_edits.extend((
@@ -422,6 +559,18 @@ class MainWindow(QMainWindow):
         toolbar_layout.addWidget(self.btn_reset_view)
         
         canvas_layout.addLayout(toolbar_layout)
+
+        # Overpressure & Alarm flashing banner across top of plot
+        self.alarm_banner = QLabel("")
+        self.alarm_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.alarm_banner.setWordWrap(True)
+        self.alarm_banner.setStyleSheet(
+            "font-size: 13px; font-weight: bold; border: 2px solid #b30000; "
+            "border-radius: 4px; padding: 6px; background-color: #ff2222; color: #ffffff;"
+        )
+        self.alarm_banner.hide()
+        canvas_layout.addWidget(self.alarm_banner)
+
         canvas_layout.addWidget(self.canvas)
         
         body_layout.addLayout(canvas_layout, stretch=5)
@@ -442,6 +591,20 @@ class MainWindow(QMainWindow):
             lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {self.colors[i]}")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.live_labels[i] = lbl
+            gb_layout.addWidget(lbl)
+            gb.setLayout(gb_layout)
+            sidebar_layout.addWidget(gb)
+
+        self.live_labels_press = {}
+        self.live_boxes_press = {}
+        for p in (1, 2):
+            gb = QGroupBox(f"Pressure {p} (P{p})")
+            gb_layout = QVBoxLayout()
+            lbl = QLabel("--")
+            lbl.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {self.pressure_colors[p]}")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.live_labels_press[p] = lbl
+            self.live_boxes_press[p] = gb
             gb_layout.addWidget(lbl)
             gb.setLayout(gb_layout)
             sidebar_layout.addWidget(gb)
@@ -491,6 +654,16 @@ class MainWindow(QMainWindow):
             sensors_layout.addWidget(panel)
         sensors_layout.addWidget(QWidget())
         layout.addLayout(sensors_layout)
+
+        press_group = QGroupBox("Pressure Sensors (via ADAM ADC)")
+        press_layout = QHBoxLayout()
+        self.pressure_configs = {}
+        for p in (1, 2):
+            panel = PressureConfigPanel(p)
+            self.pressure_configs[p] = panel
+            press_layout.addWidget(panel)
+        press_group.setLayout(press_layout)
+        layout.addWidget(press_group)
         
         layout.addStretch()
         
@@ -632,6 +805,38 @@ class MainWindow(QMainWindow):
                         self.sensor_configs[i].txt_max_val.setText(str(cfg['max_ma']))
                     if 'max_gas' in cfg:
                         self.sensor_configs[i].txt_max_gas.setText(str(cfg['max_gas']))
+
+            if 'pressure' in data:
+                p_data = data['pressure']
+                for p in (1, 2):
+                    p_key = str(p)
+                    if p_key in p_data and p in self.pressure_configs:
+                        p_cfg = p_data[p_key]
+                        panel = self.pressure_configs[p]
+                        if 'port' in p_cfg:
+                            panel.cmb_port.setCurrentText(str(p_cfg['port']))
+                        if 'adam_model' in p_cfg:
+                            panel.cmb_adam_model.setCurrentText(str(p_cfg['adam_model']))
+                        if 'adam_channel' in p_cfg:
+                            panel.cmb_adam_ch.setCurrentText(str(p_cfg['adam_channel']))
+                        if 'v_min' in p_cfg:
+                            panel.txt_v_min.setText(str(p_cfg['v_min']))
+                        if 'p_min' in p_cfg:
+                            panel.txt_p_min.setText(str(p_cfg['p_min']))
+                        if 'v_max' in p_cfg:
+                            panel.txt_v_max.setText(str(p_cfg['v_max']))
+                        if 'p_max' in p_cfg:
+                            panel.txt_p_max.setText(str(p_cfg['p_max']))
+                        if 'alarm_enabled' in p_cfg:
+                            panel.chk_alarm_enable.setChecked(bool(p_cfg['alarm_enabled']))
+                        if 'alarm_high' in p_cfg:
+                            panel.txt_alarm_high.setText(str(p_cfg['alarm_high']))
+                        if 'alarm_low' in p_cfg:
+                            panel.txt_alarm_low.setText(str(p_cfg['alarm_low']))
+                        if 'audio_enabled' in p_cfg:
+                            panel.chk_audio_alarm.setChecked(bool(p_cfg['audio_enabled']))
+                        if 'plot_press' in p_cfg:
+                            panel.chk_plot_press.setChecked(bool(p_cfg['plot_press']))
         except Exception as e:
             print(f"Failed to load settings: {e}")
 
@@ -663,6 +868,39 @@ class MainWindow(QMainWindow):
                     entry['max_val'] = 30.0
                     entry['max_gas'] = 100.0
             data[str(i)] = entry
+
+        data['pressure'] = {}
+        for p in (1, 2):
+            if p in self.pressure_configs:
+                panel = self.pressure_configs[p]
+                try: v_min = float(panel.txt_v_min.text())
+                except ValueError: v_min = 0.0
+                try: p_min = float(panel.txt_p_min.text())
+                except ValueError: p_min = 0.0
+                try: v_max = float(panel.txt_v_max.text())
+                except ValueError: v_max = 10.0
+                try: p_max = float(panel.txt_p_max.text())
+                except ValueError: p_max = 2000.0
+                try: a_high = float(panel.txt_alarm_high.text())
+                except ValueError: a_high = 1800.0
+                try: a_low = float(panel.txt_alarm_low.text())
+                except ValueError: a_low = 50.0
+
+                data['pressure'][str(p)] = {
+                    'port': panel.cmb_port.currentText(),
+                    'adam_model': panel.cmb_adam_model.currentText(),
+                    'adam_channel': int(panel.cmb_adam_ch.currentText()),
+                    'v_min': v_min,
+                    'p_min': p_min,
+                    'v_max': v_max,
+                    'p_max': p_max,
+                    'alarm_enabled': panel.chk_alarm_enable.isChecked(),
+                    'alarm_high': a_high,
+                    'alarm_low': a_low,
+                    'audio_enabled': panel.chk_audio_alarm.isChecked(),
+                    'plot_press': panel.chk_plot_press.isChecked()
+                }
+
         try:
             with open(self.settings_file, 'w') as f:
                 json.dump(data, f, indent=4)
@@ -697,9 +935,9 @@ class MainWindow(QMainWindow):
                 os.makedirs(parent_folder, exist_ok=True)
             self.txt_filename.setText(fname)
 
-            no_sensor_active = not any(
-                self.chk_activate[sensor_id].isChecked()
-                for sensor_id in range(1, 4)
+            no_sensor_active = not (
+                any(self.chk_activate[sensor_id].isChecked() for sensor_id in range(1, 4))
+                or any(self.chk_activate_press[p].isChecked() for p in (1, 2) if p in self.chk_activate_press)
             )
             if no_sensor_active:
                 QMessageBox.information(
@@ -726,6 +964,8 @@ class MainWindow(QMainWindow):
                 self.historical_data[sensor_id]['gas'].clear()
                 self.historical_data[sensor_id]['temp'].clear()
                 self.historical_data[sensor_id]['hum'].clear()
+            for p in (1, 2):
+                self.historical_pressure[p].clear()
 
             self.save_start_time = self.logger.start_time
             self.is_saving = True
@@ -786,6 +1026,23 @@ class MainWindow(QMainWindow):
             cfg.cmb_port.blockSignals(False)
             
             self.on_port_changed(i)
+
+        for p in (1, 2):
+            if p in self.pressure_configs:
+                p_cfg = self.pressure_configs[p]
+                p_curr_port = p_cfg.cmb_port.currentText()
+                p_cfg.cmb_port.blockSignals(True)
+                p_cfg.cmb_port.clear()
+                p_cfg.cmb_port.addItem("None")
+                for port_device in self.available_ports.keys():
+                    p_cfg.cmb_port.addItem(port_device)
+                if p_curr_port in self.available_ports:
+                    p_cfg.cmb_port.setCurrentText(p_curr_port)
+                elif "COM9" in self.available_ports:
+                    p_cfg.cmb_port.setCurrentText("COM9")
+                elif self.available_ports:
+                    p_cfg.cmb_port.setCurrentIndex(1)
+                p_cfg.cmb_port.blockSignals(False)
 
     def on_port_changed(self, sensor_id):
         port_name = self.sensor_configs[sensor_id].cmb_port.currentText()
@@ -931,6 +1188,68 @@ class MainWindow(QMainWindow):
         self.lbl_status[sensor_id].setText(status)
         self.lbl_status[sensor_id].setStyleSheet(f"color: {color}; font-weight: bold;")
 
+    def toggle_pressure(self, pressure_id, checked):
+        panel = self.pressure_configs[pressure_id]
+        if checked:
+            port_name = panel.cmb_port.currentText()
+            if port_name == "None" or port_name not in self.available_ports:
+                self.chk_activate_press[pressure_id].blockSignals(True)
+                self.chk_activate_press[pressure_id].setChecked(False)
+                self.chk_activate_press[pressure_id].blockSignals(False)
+                QMessageBox.warning(self, "Warning", f"Please select a valid COM port for Pressure {pressure_id} (ADAM module).")
+                return
+
+            adam_ch = int(panel.cmb_adam_ch.currentText())
+            try:
+                v_min = float(panel.txt_v_min.text())
+                p_min = float(panel.txt_p_min.text())
+                v_max = float(panel.txt_v_max.text())
+                p_max = float(panel.txt_p_max.text())
+            except ValueError:
+                QMessageBox.warning(self, "Warning", f"Invalid calibration values for Pressure {pressure_id}. Please enter valid numbers.")
+                self.chk_activate_press[pressure_id].blockSignals(True)
+                self.chk_activate_press[pressure_id].setChecked(False)
+                self.chk_activate_press[pressure_id].blockSignals(False)
+                return
+
+            def make_pressure_callback(pid, ch, v0, p0, v1, p1):
+                def cb(vals):
+                    raw_val = vals[ch]
+                    span_v = v1 - v0
+                    calc_p = p0 + (raw_val - v0) * ((p1 - p0) / span_v) if span_v != 0 else p0
+                    self.latest_pressure[pid] = {
+                        'pressure_mbar': calc_p,
+                        'voltage_v': raw_val
+                    }
+                return cb
+
+            adam_model = panel.cmb_adam_model.currentText()
+            callback = make_pressure_callback(pressure_id, adam_ch, v_min, p_min, v_max, p_max)
+            self.pressure_adam_callbacks[pressure_id] = (port_name, callback)
+            adam_manager.subscribe(port_name, callback, model=adam_model)
+            self.on_pressure_status_changed(pressure_id, "Connected")
+        else:
+            if self.pressure_adam_callbacks.get(pressure_id):
+                port, cb = self.pressure_adam_callbacks[pressure_id]
+                adam_manager.unsubscribe(port, cb)
+                self.pressure_adam_callbacks[pressure_id] = None
+            self.latest_pressure[pressure_id] = None
+            self.alarm_states[pressure_id] = {'high': False, 'low': False}
+            self.on_pressure_status_changed(pressure_id, "Not Active")
+
+    def on_pressure_status_changed(self, pressure_id, status):
+        color = "black"
+        if status == "Connected":
+            color = "green"
+        elif status == "Error":
+            color = "red"
+        elif status == "Disconnected":
+            color = "gray"
+        elif status == "Connecting":
+            color = "orange"
+        self.lbl_status_press[pressure_id].setText(status)
+        self.lbl_status_press[pressure_id].setStyleSheet(f"color: {color}; font-weight: bold;")
+
     def log_tick(self):
         if not self.is_saving:
             return
@@ -939,7 +1258,9 @@ class MainWindow(QMainWindow):
             s1 = self.latest_data[1]
             s2 = self.latest_data[2]
             s3 = self.latest_data[3]
-            self.logger.log(s1, s2, s3)
+            p1 = self.latest_pressure.get(1)
+            p2 = self.latest_pressure.get(2)
+            self.logger.log(s1, s2, s3, p1_data=p1, p2_data=p2)
         except Exception as exc:
             # PyQt can terminate on an uncaught exception inside a timer slot.
             # Stop recording safely and keep the main window running.
@@ -1006,8 +1327,108 @@ class MainWindow(QMainWindow):
                 panel.lbl_live_mv.setText("Live: -- mV")
                 panel.lbl_avg_mv.setText("60s Avg: -- mV")
                 panel.lbl_std_mv.setText("60s Std: -- mV")
-        
+
+        # Update Pressure sensors (P1 & P2)
+        for p in (1, 2):
+            pdata = self.latest_pressure.get(p)
+            panel = self.pressure_configs.get(p)
+            if panel is None:
+                continue
+            if pdata is None:
+                if p in self.live_labels_press:
+                    self.live_labels_press[p].setText("--")
+                self.historical_pressure[p].append(np.nan)
+                panel.lbl_live_readout.setText("Live: -- V | -- mbar")
+                self.alarm_states[p] = {'high': False, 'low': False}
+            else:
+                pmbar = pdata.get('pressure_mbar', np.nan)
+                pv = pdata.get('voltage_v', np.nan)
+                self.historical_pressure[p].append(pmbar)
+                if p in self.live_labels_press:
+                    self.live_labels_press[p].setText(f"P{p}: {pmbar:.1f} mbar\n({pv:.3f} V)")
+                panel.lbl_live_readout.setText(f"Live: {pv:.3f} V | {pmbar:.1f} mbar")
+
+                # Alarm check
+                is_high = False
+                is_low = False
+                if panel.chk_alarm_enable.isChecked() and not np.isnan(pmbar):
+                    try:
+                        th_high = float(panel.txt_alarm_high.text())
+                        if pmbar >= th_high:
+                            is_high = True
+                    except ValueError:
+                        pass
+                    try:
+                        th_low = float(panel.txt_alarm_low.text())
+                        if pmbar <= th_low:
+                            is_low = True
+                    except ValueError:
+                        pass
+                self.alarm_states[p] = {'high': is_high, 'low': is_low}
+
+        # Check aggregate alarm conditions & update banner/audio
+        active_alarms = []
+        any_audio = False
+        for p in (1, 2):
+            st = self.alarm_states.get(p, {'high': False, 'low': False})
+            pdata = self.latest_pressure.get(p)
+            val_str = f"{pdata['pressure_mbar']:.1f} mbar" if pdata else ""
+            panel = self.pressure_configs.get(p)
+            if not panel:
+                continue
+            if st['high']:
+                active_alarms.append(f"⚠️ OVERPRESSURE ALARM: P{p} is {val_str} (High Limit: {panel.txt_alarm_high.text()} mbar)")
+                if panel.chk_audio_alarm.isChecked():
+                    any_audio = True
+            elif st['low']:
+                active_alarms.append(f"⚠️ UNDERPRESSURE ALARM: P{p} is {val_str} (Low Limit: {panel.txt_alarm_low.text()} mbar)")
+                if panel.chk_audio_alarm.isChecked():
+                    any_audio = True
+
+        if active_alarms:
+            self.alarm_banner.setText(" | ".join(active_alarms))
+            self.alarm_banner.show()
+            if any_audio and winsound is not None:
+                if time.time() - self._last_beep_time > 2.0:
+                    try:
+                        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+                    except Exception:
+                        pass
+                    self._last_beep_time = time.time()
+        else:
+            self.alarm_banner.hide()
+
         self._update_data_only()
+
+    def _on_alarm_flash_tick(self):
+        self._flash_toggle = not self._flash_toggle
+        has_any_alarm = any(
+            st['high'] or st['low'] for st in self.alarm_states.values()
+        )
+        if has_any_alarm:
+            if self._flash_toggle:
+                self.alarm_banner.setStyleSheet(
+                    "font-size: 13px; font-weight: bold; border: 2px solid #b30000; "
+                    "border-radius: 4px; padding: 6px; background-color: #ff2222; color: #ffffff;"
+                )
+            else:
+                self.alarm_banner.setStyleSheet(
+                    "font-size: 13px; font-weight: bold; border: 2px solid #800000; "
+                    "border-radius: 4px; padding: 6px; background-color: #cc0000; color: #ffff00;"
+                )
+
+        # Also flash sidebar card for alarming sensors
+        for p in (1, 2):
+            st = self.alarm_states.get(p, {'high': False, 'low': False})
+            box = self.live_boxes_press.get(p)
+            if box:
+                if st['high'] or st['low']:
+                    if self._flash_toggle:
+                        box.setStyleSheet("QGroupBox { border: 2px solid red; background-color: #ffe6e6; }")
+                    else:
+                        box.setStyleSheet("QGroupBox { border: 2px solid darkred; background-color: #ffcccc; }")
+                else:
+                    box.setStyleSheet("")
 
     def _compute_layout_key(self):
         """Return a hashable key representing the current plot structure."""
@@ -1015,8 +1436,9 @@ class MainWindow(QMainWindow):
         gas_checked = tuple(self.sensor_configs[i].chk_plot_gas.isChecked() for i in range(1, 4))
         temp_checked = tuple(self.sensor_configs[i].chk_plot_temp.isChecked() for i in range(1, 4))
         hum_checked = tuple(self.sensor_configs[i].chk_plot_hum.isChecked() for i in range(1, 4))
+        press_checked = tuple(self.pressure_configs[p].chk_plot_press.isChecked() for p in (1, 2) if p in self.pressure_configs)
         has_elapsed = self.save_start_time is not None
-        return (mode, gas_checked, temp_checked, hum_checked, has_elapsed)
+        return (mode, gas_checked, temp_checked, hum_checked, press_checked, has_elapsed)
 
     def _force_layout_rebuild(self):
         """Invalidate layout and rebuild immediately."""
@@ -1098,6 +1520,9 @@ class MainWindow(QMainWindow):
             hum_limits = self._parse_axis_range(
                 self.txt_hum_y_min, self.txt_hum_y_max, "Humidity axis"
             )
+            press_limits = self._parse_axis_range(
+                self.txt_press_y_min, self.txt_press_y_max, "Pressure axis"
+            )
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid Axis Limits", str(exc))
             return
@@ -1107,12 +1532,14 @@ class MainWindow(QMainWindow):
             'gas_by_sensor': gas_limits,
             'temp': temp_limits,
             'hum': hum_limits,
+            'press': press_limits,
         }
 
         has_manual_y = (
             any(value is not None for value in gas_limits.values())
             or temp_limits is not None
             or hum_limits is not None
+            or press_limits is not None
         )
         if has_manual_y:
             self.chk_auto_y.blockSignals(True)
@@ -1155,12 +1582,14 @@ class MainWindow(QMainWindow):
             'gas_by_sensor': {1: None, 2: None, 3: None},
             'temp': None,
             'hum': None,
+            'press': None,
         }
 
         edits = [
             self.txt_time_window,
             self.txt_temp_y_min, self.txt_temp_y_max,
             self.txt_hum_y_min, self.txt_hum_y_max,
+            self.txt_press_y_min, self.txt_press_y_max,
         ]
         for sensor_id in range(1, 4):
             edits.extend((
@@ -1206,6 +1635,9 @@ class MainWindow(QMainWindow):
             if self.canvas.ax_hum:
                 self.canvas.ax_hum.relim()
                 self.canvas.ax_hum.autoscale_view(scalex=False, scaley=True)
+            if self.canvas.ax_press:
+                self.canvas.ax_press.relim()
+                self.canvas.ax_press.autoscale_view(scalex=False, scaley=True)
             self.canvas.draw()
 
     def reset_plot_view(self):
@@ -1216,6 +1648,8 @@ class MainWindow(QMainWindow):
             all_axes.append(self.canvas.ax_temp)
         if self.canvas.ax_hum:
             all_axes.append(self.canvas.ax_hum)
+        if self.canvas.ax_press:
+            all_axes.append(self.canvas.ax_press)
 
         for axis in all_axes:
             axis.relim()
@@ -1232,6 +1666,7 @@ class MainWindow(QMainWindow):
         self.canvas.ax_gas_list = []
         self.canvas.ax_temp = None
         self.canvas.ax_hum = None
+        self.canvas.ax_press = None
         self._lines = {}
         self.cursor = None
 
@@ -1239,8 +1674,9 @@ class MainWindow(QMainWindow):
         any_gas = any(cfg.chk_plot_gas.isChecked() for cfg in self.sensor_configs.values())
         any_temp = any(cfg.chk_plot_temp.isChecked() for cfg in self.sensor_configs.values())
         any_hum = any(cfg.chk_plot_hum.isChecked() for cfg in self.sensor_configs.values())
+        any_press = any(cfg.chk_plot_press.isChecked() for cfg in self.pressure_configs.values())
 
-        if not any_gas and not any_temp and not any_hum:
+        if not any_gas and not any_temp and not any_hum and not any_press:
             self.canvas.draw()
             return
 
@@ -1249,10 +1685,16 @@ class MainWindow(QMainWindow):
         if mode == "Separate Gas Plots" and any_gas:
             num_gas_rows = max(1, len(checked_gases))
 
-        bottom_row = 1 if (any_temp or any_hum) else 0
-        total_rows = (num_gas_rows if any_gas else 0) + bottom_row
+        bottom_items = []
+        if any_temp: bottom_items.append('temp')
+        if any_hum: bottom_items.append('hum')
+        if any_press: bottom_items.append('press')
 
-        gs = gridspec.GridSpec(total_rows, 2, figure=self.canvas.fig)
+        bottom_row = 1 if bottom_items else 0
+        total_rows = (num_gas_rows if any_gas else 0) + bottom_row
+        num_cols = max(1, len(bottom_items))
+
+        gs = gridspec.GridSpec(total_rows, num_cols, figure=self.canvas.fig)
         current_row = 0
         shared_x = None
 
@@ -1273,18 +1715,22 @@ class MainWindow(QMainWindow):
                     self.canvas.ax_gas_list.append((ax, [idx]))
                     current_row += 1
 
-        # Allocate Temp/Hum Axes
-        if any_temp and any_hum:
-            ax_t = self.canvas.fig.add_subplot(gs[current_row, 0], sharex=shared_x)
-            ax_h = self.canvas.fig.add_subplot(gs[current_row, 1], sharex=shared_x)
-            self.canvas.ax_temp = ax_t
-            self.canvas.ax_hum = ax_h
-        elif any_temp:
-            ax_t = self.canvas.fig.add_subplot(gs[current_row, :], sharex=shared_x)
-            self.canvas.ax_temp = ax_t
-        elif any_hum:
-            ax_h = self.canvas.fig.add_subplot(gs[current_row, :], sharex=shared_x)
-            self.canvas.ax_hum = ax_h
+        # Allocate Bottom Row Subplots (Temp, Hum, Pressure side-by-side)
+        if bottom_items:
+            for c_idx, item in enumerate(bottom_items):
+                if item == 'temp':
+                    ax_t = self.canvas.fig.add_subplot(gs[current_row, c_idx], sharex=shared_x)
+                    if shared_x is None: shared_x = ax_t
+                    self.canvas.ax_temp = ax_t
+                elif item == 'hum':
+                    ax_h = self.canvas.fig.add_subplot(gs[current_row, c_idx], sharex=shared_x)
+                    if shared_x is None: shared_x = ax_h
+                    self.canvas.ax_hum = ax_h
+                elif item == 'press':
+                    ax_p = self.canvas.fig.add_subplot(gs[current_row, c_idx], sharex=shared_x)
+                    if shared_x is None: shared_x = ax_p
+                    self.canvas.ax_press = ax_p
+            current_row += 1
 
         # Setup secondary elapsed-time axis
         from matplotlib.ticker import FuncFormatter
@@ -1340,9 +1786,26 @@ class MainWindow(QMainWindow):
                     self._lines[('hum', i)] = line
             self.canvas.ax_hum.legend(loc='upper left', fontsize='small')
 
+        if self.canvas.ax_press:
+            self.canvas.ax_press.set_ylabel('Pressure (mbar)')
+            self.canvas.ax_press.grid(True, linestyle='--', alpha=0.7)
+            for p in (1, 2):
+                if self.pressure_configs[p].chk_plot_press.isChecked():
+                    line, = self.canvas.ax_press.plot([], [], label=f'P{p}', color=self.pressure_colors[p])
+                    self._lines[('press', p)] = line
+                    # Visual alarm line if enabled
+                    panel = self.pressure_configs[p]
+                    if panel.chk_alarm_enable.isChecked():
+                        try:
+                            th_high = float(panel.txt_alarm_high.text())
+                            self.canvas.ax_press.axhline(th_high, color='red', linestyle='--', alpha=0.6, label=f'P{p} High Limit')
+                        except ValueError:
+                            pass
+            self.canvas.ax_press.legend(loc='upper left', fontsize='small')
+
         # Format X-Axis Time and Hide Upper Ticks
         for i, (ax, _) in enumerate(self.canvas.ax_gas_list):
-            if (any_temp or any_hum) or i < len(self.canvas.ax_gas_list) - 1:
+            if bottom_items or i < len(self.canvas.ax_gas_list) - 1:
                 ax.tick_params(labelbottom=False)
             else:
                 ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
@@ -1351,6 +1814,8 @@ class MainWindow(QMainWindow):
             self.canvas.ax_temp.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
         if self.canvas.ax_hum:
             self.canvas.ax_hum.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+        if self.canvas.ax_press:
+            self.canvas.ax_press.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
 
         self.canvas.fig.autofmt_xdate(rotation=45)
         self.canvas.fig.tight_layout()
@@ -1359,6 +1824,7 @@ class MainWindow(QMainWindow):
         all_axes = [ax for ax, _ in self.canvas.ax_gas_list]
         if self.canvas.ax_temp: all_axes.append(self.canvas.ax_temp)
         if self.canvas.ax_hum: all_axes.append(self.canvas.ax_hum)
+        if self.canvas.ax_press: all_axes.append(self.canvas.ax_press)
 
         if all_axes:
             self.cursor = MultiCursor(self.canvas.fig.canvas, all_axes, color='gray', lw=1, horizOn=True, vertOn=True)
@@ -1434,6 +1900,22 @@ class MainWindow(QMainWindow):
             elif self.auto_y_scale:
                 self.canvas.ax_hum.autoscale_view(scalex=False, scaley=True)
 
+        # Pressure plot
+        if self.canvas.ax_press:
+            for p in (1, 2):
+                key = ('press', p)
+                if key in self._lines:
+                    self._lines[key].set_data(
+                        times_list, list(self.historical_pressure[p])
+                    )
+            self.canvas.ax_press.relim()
+            self._set_following_x_limit(self.canvas.ax_press, times_list)
+            press_limits = self.manual_axis_limits.get('press')
+            if press_limits is not None:
+                self.canvas.ax_press.set_ylim(*press_limits)
+            elif self.auto_y_scale:
+                self.canvas.ax_press.autoscale_view(scalex=False, scaley=True)
+
         self.canvas.draw()
 
     def update_plot(self):
@@ -1451,6 +1933,10 @@ class MainWindow(QMainWindow):
                 self.sensor_threads[i].stop()
             if self.adam_callbacks.get(i):
                 port, cb = self.adam_callbacks[i]
+                adam_manager.unsubscribe(port, cb)
+        for p in (1, 2):
+            if self.pressure_adam_callbacks.get(p):
+                port, cb = self.pressure_adam_callbacks[p]
                 adam_manager.unsubscribe(port, cb)
         event.accept()
 

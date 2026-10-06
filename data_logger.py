@@ -15,6 +15,11 @@ class DataLogger:
                 f"S{i}_temperature_c", 
                 f"S{i}_humidity_rh"
             ])
+        for p in range(1, 3):
+            self.headers.extend([
+                f"P{p}_pressure_mbar",
+                f"P{p}_voltage_v"
+            ])
             
         if filename:
             self.set_filename(filename)
@@ -36,10 +41,11 @@ class DataLogger:
                 writer = csv.DictWriter(f, fieldnames=self.headers)
                 writer.writeheader()
 
-    def log(self, s1_data, s2_data, s3_data):
+    def log(self, s1_data, s2_data, s3_data, p1_data=None, p2_data=None):
         """
         Appends a new reading to the CSV file.
         sX_data should be a dict with keys: 'gas_ppb', 'gas_ug_m3', 'temperature_c', 'humidity_rh'
+        pX_data should be a dict with keys: 'pressure_mbar', 'voltage_v'
         If a sensor is disconnected or errored, its data should be None, and NaN will be written.
         """
         now = datetime.now()
@@ -63,9 +69,18 @@ class DataLogger:
                 row[f"S{i}_temperature_c"] = data.get('temperature_c', "NaN")
                 row[f"S{i}_humidity_rh"] = data.get('humidity_rh', "NaN")
                 
+        pressure_data_list = [p1_data, p2_data]
+        for p, data in enumerate(pressure_data_list, start=1):
+            if data is None:
+                row[f"P{p}_pressure_mbar"] = "NaN"
+                row[f"P{p}_voltage_v"] = "NaN"
+            else:
+                row[f"P{p}_pressure_mbar"] = data.get('pressure_mbar', "NaN")
+                row[f"P{p}_voltage_v"] = data.get('voltage_v', "NaN")
+
         try:
             with open(self.filename, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=self.headers)
+                writer = csv.DictWriter(f, fieldnames=self.headers, extrasaction='ignore')
                 writer.writerow(row)
         except Exception as e:
             print(f"Error logging data: {e}")
