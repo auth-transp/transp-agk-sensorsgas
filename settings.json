@@ -33,7 +33,7 @@
     },
     "pressure": {
         "1": {
-            "port": "COM9",
+            "port": "",
             "adam_model": "ADAM-4019+",
             "adam_channel": 2,
             "v_min": 0.6,
@@ -47,7 +47,7 @@
             "plot_press": true
         },
         "2": {
-            "port": "COM9",
+            "port": "",
             "adam_model": "ADAM-4019+",
             "adam_channel": 3,
             "v_min": 0.0,

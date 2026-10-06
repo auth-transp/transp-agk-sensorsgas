@@ -312,6 +312,7 @@ class MainWindow(QMainWindow):
         self._last_beep_time = 0
         self._flash_toggle = False
         
+        self.plot_start_time = datetime.now()
         self.alarm_flash_timer = QTimer()
         self.alarm_flash_timer.timeout.connect(self._on_alarm_flash_tick)
         self.alarm_flash_timer.start(500)
@@ -348,6 +349,7 @@ class MainWindow(QMainWindow):
             if p in self.pressure_configs:
                 self.pressure_configs[p].chk_plot_press.toggled.connect(lambda _: self._force_layout_rebuild())
 
+        self.update_plot()
         
         self.plot_timer = QTimer()
         self.plot_timer.timeout.connect(self.plot_tick)
@@ -553,10 +555,15 @@ class MainWindow(QMainWindow):
         self.toolbar = NavigationToolbar(self.canvas, self)
         toolbar_layout.addWidget(self.toolbar)
         
-        self.btn_reset_view = QPushButton("Reset Plot View")
+        self.btn_reset_view = QPushButton("Reset View")
         self.btn_reset_view.setStyleSheet("font-weight: bold;")
         self.btn_reset_view.clicked.connect(self.reset_plot_view)
         toolbar_layout.addWidget(self.btn_reset_view)
+
+        self.btn_clear_plot = QPushButton("Clear / Reset Plot")
+        self.btn_clear_plot.setStyleSheet("font-weight: bold;")
+        self.btn_clear_plot.clicked.connect(self.clear_plot)
+        toolbar_layout.addWidget(self.btn_clear_plot)
         
         canvas_layout.addLayout(toolbar_layout)
 
@@ -968,6 +975,7 @@ class MainWindow(QMainWindow):
                 self.historical_pressure[p].clear()
 
             self.save_start_time = self.logger.start_time
+            self.plot_start_time = datetime.now()
             self.is_saving = True
             self._force_layout_rebuild()
 
@@ -1167,6 +1175,7 @@ class MainWindow(QMainWindow):
             self.latest_data[sensor_id] = None
             self.lbl_status[sensor_id].setText("Not Active")
             self.lbl_status[sensor_id].setStyleSheet("color: gray; font-weight: bold;")
+        self._force_layout_rebuild()
 
     def on_sensor_info(self, sensor_id, info):
         self.sensor_configs[sensor_id].lbl_info.setText(f"Info: {info}")
@@ -1236,6 +1245,7 @@ class MainWindow(QMainWindow):
             self.latest_pressure[pressure_id] = None
             self.alarm_states[pressure_id] = {'high': False, 'low': False}
             self.on_pressure_status_changed(pressure_id, "Not Active")
+        self._force_layout_rebuild()
 
     def on_pressure_status_changed(self, pressure_id, status):
         color = "black"
@@ -1398,7 +1408,7 @@ class MainWindow(QMainWindow):
         else:
             self.alarm_banner.hide()
 
-        self._update_data_only()
+        self.update_plot()
 
     def _on_alarm_flash_tick(self):
         self._flash_toggle = not self._flash_toggle
@@ -1611,12 +1621,21 @@ class MainWindow(QMainWindow):
 
     def _set_following_x_limit(self, axis, times_list):
         window_s = self.manual_axis_limits.get('time_window_s')
-        if window_s is not None and times_list:
-            right = times_list[-1]
+        if not times_list:
+            t0 = getattr(self, 'plot_start_time', datetime.now())
+            axis.set_xlim(t0, t0 + timedelta(seconds=10))
+            return
+
+        right = times_list[-1]
+        if window_s is not None and window_s > 0:
             left = right - timedelta(seconds=window_s)
-            axis.set_xlim(left, right)
         else:
-            axis.autoscale_view(scalex=True, scaley=False)
+            t0 = getattr(self, 'plot_start_time', times_list[0])
+            left = min(t0, times_list[0])
+            if (right - left).total_seconds() < 10:
+                right = left + timedelta(seconds=10)
+
+        axis.set_xlim(left, right)
 
     def toggle_auto_y_scale(self, checked):
         self.auto_y_scale = checked
@@ -1653,12 +1672,28 @@ class MainWindow(QMainWindow):
 
         for axis in all_axes:
             axis.relim()
-            axis.autoscale(enable=True, axis='both', tight=False)
+            self._set_following_x_limit(axis, list(self.times))
+            if self.auto_y_scale:
+                axis.autoscale(enable=True, axis='y', tight=False)
 
         for axis, _ in self.canvas.ax_gas_list:
-            axis.set_ylim(bottom=0)
+            if self.auto_y_scale:
+                axis.set_ylim(bottom=0)
 
         self.canvas.draw()
+
+    def clear_plot(self):
+        """Clear all historical plot data and reset time axis to current time."""
+        self.times.clear()
+        for i in range(1, 4):
+            self.historical_data[i]['gas'].clear()
+            self.historical_data[i]['temp'].clear()
+            self.historical_data[i]['hum'].clear()
+        for p in (1, 2):
+            self.historical_pressure[p].clear()
+        self.plot_start_time = datetime.now()
+        self.clear_axis_limits(redraw=False)
+        self._force_layout_rebuild()
 
     def _rebuild_layout(self):
         """Clear figure and recreate axes structure. Only called when layout changes."""
